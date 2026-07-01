@@ -1,0 +1,3554 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>School ID Card Management System</title>
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA4CrwjH-4Fm8pFwgaPclMPn9GpcCsaSTM",
+    authDomain: "mukesh-f0fff.firebaseapp.com",
+    databaseURL: "https://mukesh-f0fff-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "mukesh-f0fff",
+    storageBucket: "mukesh-f0fff.firebasestorage.app",
+    messagingSenderId: "1019156275040",
+    appId: "1:1019156275040:web:d57651808a95ff3b31c805",
+    measurementId: "G-3LFF0FLMF3"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const firestore = getFirestore(app);
+  const storage = getStorage(app);
+  const auth = getAuth(app);
+
+  function markFirebaseReady() {
+    if(window._firebaseReady) return;
+    window._firebaseReady = true;
+    document.dispatchEvent(new Event('firebaseReady'));
+  }
+
+  // IMPORTANT: Sign in anonymously so Firestore/Storage security rules (which usually
+  // require request.auth != null) allow THIS device to read & write the shared cloud
+  // data. Without this, only the device that already has data cached in localStorage
+  // "works" — every other device silently fails to pull cloud data, which is exactly
+  // why a Sub Admin added on Device A could not log in on Device B.
+  signInAnonymously(auth)
+    .then(() => markFirebaseReady())
+    .catch((e) => {
+      console.warn('Firebase anonymous sign-in failed:', e);
+      document.dispatchEvent(new CustomEvent('firebaseSyncError', {
+        detail: { type: 'auth', chunk: '-', error: (e && e.message) || String(e) }
+      }));
+      // Still mark ready so the app doesn't hang on a loading state forever —
+      // it will just fall back to localStorage-only (no cross-device sync) until
+      // Anonymous sign-in is enabled in the Firebase Console.
+      markFirebaseReady();
+    });
+
+  // ---- Firebase Firestore helpers (global) ----
+  window._fbSaveChunk = async function(chunkName, data) {
+    try {
+      await setDoc(doc(firestore, 'appData', chunkName), { payload: JSON.stringify(data) });
+      return true;
+    } catch(e) {
+      console.warn('Firebase save error:', e);
+      document.dispatchEvent(new CustomEvent('firebaseSyncError', {
+        detail: { type: 'save', chunk: chunkName, error: (e && e.message) || String(e) }
+      }));
+      return false;
+    }
+  };
+
+  window._fbLoadChunk = async function(chunkName) {
+    try {
+      const snap = await getDoc(doc(firestore, 'appData', chunkName));
+      if(snap.exists()) return JSON.parse(snap.data().payload);
+    } catch(e) {
+      console.warn('Firebase load error:', e);
+      document.dispatchEvent(new CustomEvent('firebaseSyncError', {
+        detail: { type: 'load', chunk: chunkName, error: (e && e.message) || String(e) }
+      }));
+    }
+    return null;
+  };
+
+  // ---- Firebase Storage helpers (global) ----
+  window._fbUploadImage = async function(key, dataUrl) {
+    try {
+      const storageRef = ref(storage, 'images/' + key);
+      await uploadString(storageRef, dataUrl, 'data_url');
+      const url = await getDownloadURL(storageRef);
+      return url;
+    } catch(e) { console.warn('Firebase Storage upload error:', e); return null; }
+  };
+
+  window._fbGetImageUrl = async function(key) {
+    try {
+      const storageRef = ref(storage, 'images/' + key);
+      return await getDownloadURL(storageRef);
+    } catch(e) { return null; }
+  };
+
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --primary: #4f46e5;
+    --primary-dark: #3730a3;
+    --primary-light: #818cf8;
+    --accent: #f59e0b;
+    --success: #10b981;
+    --danger: #ef4444;
+    --bg: #f3f4f6;
+    --card: #ffffff;
+    --text: #1f2937;
+    --text-muted: #6b7280;
+    --border: #e5e7eb;
+    --sidebar-w: 260px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  #sidebar {
+    width: var(--sidebar-w);
+    background: linear-gradient(180deg, var(--primary-dark), var(--primary));
+    color: white;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    display: flex; flex-direction: column;
+    z-index: 100;
+    box-shadow: var(--shadow-lg);
+    transition: transform 0.3s ease;
+  }
+
+  .sidebar-logo { padding: 24px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sidebar-logo h2 { font-size: 18px; font-weight: 700; display:flex; align-items:center; gap:8px;}
+  .sidebar-logo span { font-size: 12px; opacity: 0.8; margin-left: 32px; display:block;}
+
+  .active-school-badge {
+    margin: 16px; background: rgba(255,255,255,0.15); border-radius: 8px; padding: 12px; 
+    border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(4px);
+  }
+  .active-school-badge .sb-name { font-weight: 600; font-size: 13px; margin-bottom: 2px;}
+  .active-school-badge .sb-id { opacity: 0.7; font-size: 11px; }
+
+  nav { flex: 1; overflow-y: auto; padding: 10px 0; }
+  .nav-section { font-size: 11px; text-transform: uppercase; font-weight: 600; opacity: 0.6; padding: 16px 20px 8px; letter-spacing: 0.5px;}
+  nav a {
+    display: flex; align-items: center; gap: 12px; padding: 12px 20px; color: rgba(255,255,255,0.85);
+    text-decoration: none; font-size: 14px; transition: all 0.2s; border-left: 4px solid transparent; cursor: pointer;
+  }
+  nav a:hover, nav a.active { background: rgba(255,255,255,0.1); color: white; border-left-color: var(--accent); }
+
+  #main { margin-left: var(--sidebar-w); flex: 1; display: flex; flex-direction: column; width: calc(100% - var(--sidebar-w)); }
+  
+  header { 
+    background: var(--card); padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; 
+    box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 50; 
+  }
+  header h1 { font-size: 20px; font-weight: 600; color: var(--primary-dark); }
+  .header-actions { display: flex; gap: 12px; align-items: center; }
+
+  .role-simulator {
+    background: #fef3c7; border: 1px solid #fde68a; color: #92400e; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+  }
+  .role-simulator select { background: transparent; border: none; font-weight: 600; color: inherit; outline: none; cursor: pointer;}
+
+  .page { display: none; padding: 24px 28px; animation: fadeIn 0.3s ease; }
+  .page.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .card { background: var(--card); border-radius: var(--radius-lg); padding: 24px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); margin-bottom: 20px; }
+  .card-title { font-size: 16px; font-weight: 600; margin-bottom: 20px; color: var(--primary-dark); display: flex; align-items: center; justify-content: space-between;}
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
+  .form-control { 
+    width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; 
+    font-family: inherit; transition: all 0.2s; background: #f9fafb;
+  }
+  .form-control:focus { outline: none; border-color: var(--primary); background: white; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  .btn { 
+    padding: 10px 20px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; 
+    cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .btn-success { background: var(--success); color: white; }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-outline { background: white; border: 1px solid #d1d5db; color: var(--text); }
+  .btn-outline:hover { background: #f9fafb; border-color: #9ca3af; }
+  .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px;}
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { background: #f9fafb; padding: 12px 16px; text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid var(--border); font-size: 12px; text-transform: uppercase; }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: #f9fafb; }
+  
+  .badge { padding: 4px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-blue { background: #e0e7ff; color: #3730a3; }
+  .badge-green { background: #d1fae5; color: #065f46; }
+
+  .upload-box { 
+    border: 2px dashed #d1d5db; border-radius: 12px; padding: 20px; text-align: center; 
+    cursor: pointer; background: #f9fafb; transition: all 0.2s; position: relative; overflow: hidden;
+  }
+  .upload-box:hover { border-color: var(--primary); background: #f0f4ff; }
+  .upload-box img { max-width: 100%; max-height: 100px; object-fit: contain; margin-top: 10px; border-radius: 6px; }
+  .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  .builder-row { display: grid; grid-template-columns: 120px 1.5fr 140px 60px 60px 40px; gap: 12px; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px; margin-bottom: 10px; border: 1px solid var(--border);}
+  .builder-head { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; background: transparent; border: none; padding-bottom: 4px; margin-bottom: 0;}
+
+  /* Designer compact grid layout */
+  .designer-main-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .designer-col {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 12px;
+    box-shadow: var(--shadow-sm);
+    min-width: 0;
+  }
+  .dcol-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary-dark);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--primary);
+    letter-spacing: 0.3px;
+  }
+  .drow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    min-width: 0;
+  }
+  .dlabel {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    min-width: 68px;
+    flex-shrink: 0;
+  }
+  .dval {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--primary);
+    margin-left: 2px;
+  }
+  .dcontrol {
+    font-size: 11px !important;
+    padding: 4px 6px !important;
+    height: auto !important;
+    min-width: 0;
+    flex: 1;
+  }
+  .dslider {
+    width: 100%;
+    flex: 1;
+    accent-color: var(--primary);
+    cursor: pointer;
+    height: 4px;
+  }
+  .dcolor {
+    width: 34px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    cursor: pointer;
+    padding: 1px;
+    flex-shrink: 0;
+  }
+  .dshape-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    background: #f0f4ff;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: border-color 0.2s;
+  }
+  .dshape-btn:has(input:checked) {
+    border-color: var(--primary);
+    background: #e0e7ff;
+  }
+  .dtheme {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .dtheme:hover {
+    transform: scale(1.15);
+    border-color: #1f2937;
+  }
+  /* Field toggles compact */
+  #d_field_toggles .dfield-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #f9fafb;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 11px;
+  }
+  #d_field_toggles .dfield-row span.dfield-name {
+    flex: 1;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #d_field_toggles .dfield-row button {
+    background: none;
+    border: 1px solid #e5e7eb;
+    border-radius: 3px;
+    padding: 1px 4px;
+    cursor: pointer;
+    font-size: 10px;
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+  #d_field_toggles .dfield-row button:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  /* Designer page padding adjustment */
+  #page-card-designer.page {
+    padding: 16px 20px;
+  }
+  .save-status-badge {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
+    white-space: nowrap; transition: all 0.2s ease;
+  }
+  .save-status-badge.saved { background: #d1fae5; color: #065f46; }
+  .save-status-badge.unsaved { background: #fef3c7; color: #92400e; }
+
+  /* Toggle Switch */
+  .toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 34px; }
+  .toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+  .toggle input:checked + .toggle-slider { background-color: var(--primary); }
+  .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+  /* Floating Preview Panel */
+  #floating-preview-panel {
+    position: fixed !important;
+    top: 80px;
+    right: 20px;
+    left: auto;
+    z-index: 500;
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2), 0 4px 16px rgba(0,0,0,0.1);
+    border: 1px solid var(--border);
+    width: 380px;
+    max-width: calc(100vw - 20px);
+    max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+    transition: box-shadow 0.2s ease, width 0.3s ease;
+  }
+  #floating-preview-panel.collapsed {
+    width: 200px;
+  }
+  #floating-preview-panel.dragging {
+    transition: none;
+    box-shadow: 0 25px 70px rgba(0,0,0,0.3), 0 8px 20px rgba(0,0,0,0.15);
+    opacity: 0.96;
+  }
+  #floating-preview-panel .fp-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0; color: white; cursor: grab;
+    user-select: none; flex-shrink: 0; touch-action: none;
+  }
+  #floating-preview-panel .fp-header:active,
+  #floating-preview-panel.dragging .fp-header { cursor: grabbing; }
+  #floating-preview-panel .fp-header span { font-size: 13px; font-weight: 600; }
+  #floating-preview-panel .fp-header .fp-btns { display: flex; gap: 6px; }
+  #floating-preview-panel .fp-header button {
+    background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white;
+    border-radius: 4px; padding: 2px 7px; font-size: 12px; cursor: pointer;
+  }
+  #floating-preview-panel .fp-header button:hover { background: rgba(255,255,255,0.35); }
+  #floating-preview-panel .fp-body { padding: 14px; text-align: center; overflow-y: auto; flex: 1; min-height: 0; }
+  #floating-preview-panel.collapsed .fp-body { display: none; }
+  #floating-preview-panel .fp-controls {
+    display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px;
+    background: #f9fafb; padding: 6px; border-radius: 8px;
+  }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); z-index: 1000; align-items: center; justify-content: center; padding: 20px;}
+  .modal-overlay.open { display: flex; }
+  .modal { background: white; width: 100%; max-width: 700px; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); max-height: 90vh; display: flex; flex-direction: column; }
+  .modal-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal-body { padding: 24px; overflow-y: auto; }
+  .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 12px; background: #f9fafb; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+
+  .id-card-render { 
+    width: 320px; height: 200px; background: white; border-radius: 12px; box-shadow: var(--shadow-md); 
+    position: relative; overflow: hidden; font-family: Arial, sans-serif; border: 1px solid #e5e7eb; margin: auto;
+  }
+  .id-card-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.15; z-index: 1; }
+  .id-card-content { position: relative; z-index: 2; padding: 12px; display: flex; flex-direction: column; height: 100%; }
+  .id-card-header { display: flex; gap: 10px; align-items: center; border-bottom: 2px solid var(--primary); padding-bottom: 8px; margin-bottom: 8px; }
+  .id-card-logo { width: 40px; height: 40px; object-fit: contain; }
+  .id-card-school-info { flex: 1; text-align: center; }
+  .id-card-school-name { font-size: 14px; font-weight: bold; color: var(--primary-dark); line-height: 1.1; }
+  .id-card-school-contact { font-size: 9px; color: #4b5563; margin-top: 2px;}
+  .id-card-body { display: flex; gap: 12px; flex: 1; }
+  .id-card-photo { width: 70px; height: 85px; border: 2px solid var(--primary); border-radius: 6px; object-fit: cover; background: #f3f4f6;}
+  .id-card-details { flex: 1; font-size: 10px; }
+  .id-card-row { display: flex; margin-bottom: 4px; }
+  .id-card-label { font-weight: bold; width: 55px; color: #374151; }
+  .id-card-val { flex: 1; border-bottom: 1px dashed #d1d5db; color: #111827;}
+  .id-card-footer { display: flex; justify-content: flex-end; align-items: flex-end; height: 30px;}
+  .id-card-sign { height: 25px; max-width: 80px; object-fit: contain; }
+
+  /* Toast */
+  #toast { position: fixed; bottom: 20px; right: 20px; background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500; transform: translateY(100px); opacity: 0; transition: all 0.3s; z-index: 9999; box-shadow: var(--shadow-lg); }
+  #toast.show { transform: translateY(0); opacity: 1; }
+
+  /* Print Styles */
+  #printCardArea { display: none; }
+  @media print {
+    @page { margin: 10mm; size: A4; }
+    body * { visibility: hidden; }
+    #printCardArea { 
+      display: flex !important; visibility: visible; 
+      position: fixed; top:0; left:0; width:100vw; height:100vh; 
+      align-items:center; justify-content:center; background:white; z-index:99999; 
+    }
+    #printCardArea * { visibility: visible; }
+    #printCardArea > div {
+      transform: none !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    body.batch-printing #printCardArea { display: none !important; }
+    body.batch-printing #batchPrintContainer { 
+      display: block !important; visibility: visible; 
+      position: fixed; top:0; left:0; width:100%; background:white; z-index:99999; 
+    }
+    body.batch-printing #batchPrintContainer * { 
+      visibility: visible; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .print-page { page-break-after: always; }
+    .print-card-cell { break-inside: avoid; }
+  }
+
+  /* Login Screen */
+  #loginScreen {
+    position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary) 60%, #818cf8);
+  }
+  #loginScreen .login-box {
+    background: white; border-radius: 16px; padding: 36px 32px; width: 360px; max-width: 90vw;
+    box-shadow: 0 25px 70px rgba(0,0,0,0.3);
+  }
+  #loginScreen .login-logo { text-align: center; font-size: 32px; margin-bottom: 6px; }
+  #loginScreen h2 { text-align: center; font-size: 18px; margin-bottom: 4px; color: var(--text); }
+  #loginScreen p.sub { text-align: center; font-size: 12px; color: var(--text-muted); margin-bottom: 22px; }
+  #loginScreen .role-toggle { display: flex; gap: 8px; margin-bottom: 18px; background: #f3f4f6; border-radius: 10px; padding: 4px; }
+  #loginScreen .role-toggle button {
+    flex: 1; border: none; background: transparent; padding: 8px; border-radius: 8px; font-size: 12px;
+    font-weight: 600; cursor: pointer; color: var(--text-muted); transition: all 0.15s;
+  }
+  #loginScreen .role-toggle button.active { background: white; color: var(--primary); box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+  #loginScreen .form-group { margin-bottom: 14px; }
+  #loginScreen .form-group label { font-size: 12px; font-weight: 600; color: var(--text); display: block; margin-bottom: 5px; }
+  #loginScreen #loginError { color: #dc2626; font-size: 12px; margin-bottom: 10px; text-align: center; min-height: 16px; }
+  #appShell { display: none; }
+  #appShell.unlocked { display: block; }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">🏫</div>
+    <h2>School ID Admin Panel</h2>
+    <p class="sub">Login karke aage badhein</p>
+
+    <div class="role-toggle">
+      <button type="button" id="loginTabAdmin" class="active" onclick="switchLoginTab('admin')">👑 Admin</button>
+      <button type="button" id="loginTabSub" onclick="switchLoginTab('sub')">👤 Sub Admin</button>
+    </div>
+
+    <div id="loginError"></div>
+
+    <div class="form-group">
+      <label id="loginUserLabel">Admin Password</label>
+      <input type="text" id="login_username" class="form-control" placeholder="Username" style="display:none;margin-bottom:10px;">
+      <input type="password" id="login_password" class="form-control" placeholder="Password" onkeydown="if(event.key==='Enter') attemptLogin()">
+    </div>
+
+    <button class="btn btn-primary" style="width:100%;" onclick="attemptLogin()">🔓 Login</button>
+  </div>
+</div>
+
+<div id="appShell">
+
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    🏫 <span>School ID Admin</span>
+  </div>
+
+  <div class="active-school-badge" id="sidebarSchoolBadge">
+    <div class="sb-name" id="sbName">No School Active</div>
+    <div class="sb-id" id="sbCity">--</div>
+  </div>
+
+  <nav id="navMenu">
+    <div class="nav-section">Management</div>
+    <a onclick="showPage('dashboard')" id="nav-dashboard" class="active">📊 Dashboard</a>
+    <a onclick="showPage('schools')" id="nav-schools" class="admin-only">🏫 Schools</a>
+    <a onclick="showPage('subusers')" id="nav-subusers" class="admin-only">👥 Sub Admins</a>
+    
+    <div class="nav-section">ID Cards & Forms</div>
+    <a onclick="showPage('form-builder')" id="nav-form-builder" class="admin-only">🛠️ Form Builder</a>
+    <a onclick="showPage('students')" id="nav-students">🎓 Students List</a>
+    <a onclick="showPage('add-student')" id="nav-add-student">➕ Add Student</a>
+    <a onclick="showPage('preview')" id="nav-preview">🪪 Print Cards</a>
+    <a onclick="showPage('card-designer')" id="nav-card-designer" class="admin-only">🎨 ID Card Designer</a>
+  </nav>
+</aside>
+
+<main id="main">
+  <header>
+    <div>
+      <h1 id="pageTitle">Dashboard</h1>
+    </div>
+    <div class="header-actions" style="display:flex;align-items:center;gap:14px;">
+      <span id="loggedInAsBadge" style="font-size:12px;font-weight:600;color:var(--text-muted);"></span>
+      <div class="role-simulator admin-only" id="roleSimulatorWrap">
+        🎭 Simulate Role: 
+        <select id="roleSimulator" onchange="changeSimulationRole()">
+          <option value="admin">Super Admin</option>
+          </select>
+      </div>
+      <button class="btn btn-sm btn-outline" onclick="logoutUser()">🚪 Logout</button>
+    </div>
+  </header>
+
+  <div class="page active" id="page-dashboard">
+    <div class="card grid-3">
+      <div style="background:#eff6ff; padding: 20px; border-radius: 12px; border: 1px solid #bfdbfe;">
+        <h3 style="color:#1e3a8a; font-size:24px;" id="stat-schools">0</h3>
+        <p style="color:#3b82f6; font-size:13px; font-weight:600;">Total Schools</p>
+      </div>
+      <div style="background:#ecfdf5; padding: 20px; border-radius: 12px; border: 1px solid #a7f3d0;">
+        <h3 style="color:#065f46; font-size:24px;" id="stat-students">0</h3>
+        <p style="color:#10b981; font-size:13px; font-weight:600;">Total Students</p>
+      </div>
+      <div style="background:#fefce8; padding: 20px; border-radius: 12px; border: 1px solid #fde047;">
+        <h3 style="color:#854d0e; font-size:24px;" id="stat-subusers">0</h3>
+        <p style="color:#eab308; font-size:13px; font-weight:600;">Sub Admins</p>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-title">🚀 Quick Actions</div>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="btn btn-primary admin-only" onclick="openSchoolModal()">➕ Add New School</button>
+        <button class="btn btn-outline admin-only" onclick="openSubUserModal()">👥 Add Sub Admin</button>
+        <button class="btn btn-success" onclick="showPage('add-student')">🎓 Register Student</button>
+        <button class="btn btn-outline" onclick="showStorageInfo()" style="border-color:#f59e0b;color:#92400e;">💾 Storage Info</button>
+        <button class="btn btn-outline admin-only" onclick="exportBackup()" style="border-color:#16a34a;color:#15803d;">⬇️ Backup Export</button>
+        <button class="btn btn-outline admin-only" onclick="document.getElementById('importBackupInput').click()" style="border-color:#2563eb;color:#1d4ed8;">⬆️ Backup Import</button>
+        <input type="file" id="importBackupInput" accept=".json" style="display:none;" onchange="importBackup(event)">
+      </div>
+      <p class="admin-only" style="font-size:11px;color:var(--text-muted);margin-top:10px;">
+        ⚠️ Tip: Browser ka data kabhi-kabhi reload/clear par chala ja sakta hai. Regular intervals par "Backup Export" karke file safe rakhein — "Backup Import" se kabhi bhi wapas restore kar sakte hain.
+      </p>
+    </div>
+  </div>
+
+  <div class="page" id="page-schools">
+    <div class="card">
+      <div class="card-title">
+        <span>🏫 Managed Schools</span>
+        <div style="display:flex; gap:10px;">
+          <input type="text" class="form-control" placeholder="🔍 Search schools..." style="width: 250px;" onkeyup="renderSchoolsList(this.value)">
+          <button class="btn btn-primary" onclick="openSchoolModal()">+ Add School</button>
+        </div>
+      </div>
+      <div style="overflow-x: auto;">
+        <table id="schoolsTable">
+          <thead><tr><th>Logo</th><th>School Name</th><th>City</th><th>Contact</th><th>Actions</th></tr></thead>
+          <tbody id="schoolsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-subusers">
+    <div class="card">
+      <div class="card-title">
+        <span>👥 Sub Admins</span>
+        <button class="btn btn-primary" onclick="openSubUserModal()">+ Add Sub Admin</button>
+      </div>
+      <div style="overflow-x: auto;">
+        <table id="subusersTable">
+          <thead><tr><th>Name / Username</th><th>Assigned School</th><th>Classes</th><th>Perms</th><th>Actions</th></tr></thead>
+          <tbody id="subusersTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-form-builder">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">🛠️ Configure Registration Form</div>
+        <div class="form-group">
+          <label>Select School to configure form for:</label>
+          <select class="form-control" id="builderSchoolSelect" onchange="loadFormBuilderConfig()">
+          </select>
+        </div>
+        
+        <div style="margin-top: 24px;">
+          <div class="builder-row builder-head">
+            <div>Field Name</div>
+            <div>Custom Label</div>
+            <div>Auto-Fill</div>
+            <div style="text-align:center;">Show</div>
+            <div style="text-align:center;">Required</div>
+            <div></div>
+          </div>
+          <div id="builderBaseFields"></div>
+        </div>
+
+        <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h4 style="font-size:14px; font-weight:600;">Extra Custom Fields</h4>
+            <button class="btn btn-sm btn-outline" onclick="addCustomFieldToBuilder()">+ Add Field</button>
+          </div>
+          <div id="builderCustomFields"></div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center;">
+          <button class="btn btn-outline" onclick="applyFormToAllSchools()">🔄 Apply to All Schools</button>
+          <button class="btn btn-primary" onclick="saveFormBuilderConfig()">💾 Save Form Configuration</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">👁️ Live Preview (Sub-User View)</div>
+        <div id="formBuilderPreview" style="background:#f9fafb; padding:20px; border-radius:12px; border:1px dashed #d1d5db;">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-students">
+    <div class="card">
+      <div class="card-title">
+        <span>🎓 Registered Students</span>
+        <input type="text" class="form-control" placeholder="🔍 Search students..." style="width: 250px;" onkeyup="renderStudentsList(this.value)">
+      </div>
+      <div style="overflow-x: auto;">
+        <table id="studentsTable">
+          <thead><tr><th>Photo</th><th>Name</th><th>Class/Sec</th><th>Roll No</th><th>Mobile</th><th>Actions</th></tr></thead>
+          <tbody id="studentsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-add-student">
+    <div class="card">
+      <div class="card-title">➕ Register New Student</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">Fill out the details below. The fields are configured by the Admin for your assigned school.</p>
+      
+      <div id="dynamicStudentForm" class="grid-2">
+      </div>
+      
+      <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px; text-align: right;">
+        <button class="btn btn-primary" onclick="saveStudentData()">✅ Save Student</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-preview">
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">🖨️ Print Settings</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="form-group" style="margin:0;min-width:180px;">
+          <label>School</label>
+          <select class="form-control" id="print_school_filter" onchange="printSchoolFilterChanged()"></select>
+        </div>
+        <div class="form-group admin-only" style="margin:0;min-width:140px;">
+          <label>Class Filter (Batch)</label>
+          <select class="form-control" id="print_class_filter"><option value="">All Classes</option></select>
+        </div>
+        <div class="form-group admin-only" style="margin:0;min-width:120px;">
+          <label>Cards Per Page</label>
+          <select class="form-control" id="print_cards_per_page">
+            <option value="2">2/page</option>
+            <option value="4">4/page</option>
+            <option value="6" selected>6/page</option>
+            <option value="8">8/page</option>
+            <option value="10">10/page</option>
+            <option value="12">12/page</option>
+            <option value="14">14/page</option>
+          </select>
+        </div>
+        <button class="btn btn-success perm-print-btn" onclick="batchPrintCards()" style="margin-left:auto;">🖨️ Batch Print (Class-wise)</button>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Select Student to Print</div>
+        <input type="text" class="form-control" placeholder="🔍 Search name..." style="margin-bottom: 12px;" onkeyup="renderPrintList(this.value)">
+        <div id="printStudentList" style="max-height: 400px; overflow-y: auto;">
+        </div>
+      </div>
+      
+      <div class="card" style="text-align: center;">
+        <div class="card-title" style="justify-content: center;">🪪 ID Card Preview</div>
+        <div id="cardRenderArea" style="margin-bottom: 20px;">
+          <p style="color:var(--text-muted); font-size:13px; margin: 40px 0;">Select a student from the left to preview.</p>
+        </div>
+        <button class="btn btn-success perm-print-btn" onclick="printSingleCard()">🖨️ Print ID Card</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-card-designer">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px;">
+        <span style="font-size:13px;font-weight:600;white-space:nowrap;">🏫 School:</span>
+        <select class="form-control" id="designer_school" onchange="designerSchoolChanged()" style="font-size:13px;padding:7px 10px;"></select>
+        <span id="design_save_status" class="save-status-badge unsaved">⚪ No saved design</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="resetDesigner()">🔄 Reset</button>
+        <button class="btn btn-outline btn-sm" onclick="clearDesignTemplate()" title="Remove permanently saved design for this school" style="border-color:#fca5a5;color:#b91c1c;">🗑️ Clear Saved</button>
+        <button class="btn btn-primary btn-sm" onclick="saveDesignTemplate()" title="Permanently save this design for the selected school">💾 Save for This School</button>
+        <button class="btn btn-success btn-sm" onclick="showFloatingPreview()">👁️ Preview</button>
+        <button class="btn btn-outline btn-sm" onclick="printSingleCard(true)" title="Print using current unsaved designer settings">🖨️ Test Print</button>
+      </div>
+    </div>
+
+    <div class="designer-main-grid">
+
+      <div class="designer-col">
+        <div class="dcol-title">📐 Layout & Photo</div>
+
+        <div class="drow">
+          <label class="dlabel">Card Size</label>
+          <select class="form-control dcontrol" id="d_size" onchange="updateDesignerPreview()">
+            <option value="landscape">Landscape 3.37"×2.13"</option>
+            <option value="portrait">Portrait 2.13"×3.37"</option>
+            <option value="square">Square 2.5"×2.5"</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Photo Pos</label>
+          <select class="form-control dcontrol" id="d_photo_pos" onchange="updateDesignerPreview()">
+            <option value="left">Left Side</option>
+            <option value="right">Right Side</option>
+            <option value="top">Top Center</option>
+            <option value="none">No Photo</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Photo Shape</label>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <label class="dshape-btn" id="shape_square_lbl"><input type="radio" name="d_photo_shape" value="square" id="d_shape_square" checked onchange="updateDesignerPreview()" style="display:none;"> ⬜ Sq</label>
+            <label class="dshape-btn" id="shape_circle_lbl"><input type="radio" name="d_photo_shape" value="circle" id="d_shape_circle" onchange="updateDesignerPreview()" style="display:none;"> ⭕ Cir</label>
+            <label class="dshape-btn" id="shape_rounded_lbl"><input type="radio" name="d_photo_shape" value="rounded" id="d_shape_rounded" onchange="updateDesignerPreview()" style="display:none;"> 🔲 Rnd</label>
+          </div>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Photo Size <span id="photo_size_val" class="dval">70px</span></label>
+          <input type="range" id="d_photo_size" min="40" max="130" value="70" oninput="document.getElementById('photo_size_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Offset X <span id="photo_offset_x_val" class="dval">0px</span></label>
+          <input type="range" id="d_photo_offset_x" min="-30" max="100" value="0" oninput="document.getElementById('photo_offset_x_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Offset Y <span id="photo_offset_y_val" class="dval">0px</span></label>
+          <input type="range" id="d_photo_offset_y" min="-50" max="100" value="0" oninput="document.getElementById('photo_offset_y_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Header Style</label>
+          <select class="form-control dcontrol" id="d_header_style" onchange="updateDesignerPreview()">
+            <option value="banner">Color Banner</option>
+            <option value="gradient">Gradient Strip</option>
+            <option value="minimal">Minimal Line</option>
+            <option value="centered">Centered Logo</option>
+            <option value="transparent">Transparent</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Logo Shape</label>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <label class="dshape-btn"><input type="radio" name="d_logo_shape" value="square" id="d_logo_shape_square" checked onchange="updateDesignerPreview()" style="display:none;"> ⬜ Sq</label>
+            <label class="dshape-btn"><input type="radio" name="d_logo_shape" value="circle" id="d_logo_shape_circle" onchange="updateDesignerPreview()" style="display:none;"> ⭕ Cir</label>
+          </div>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Logo Size <span id="logo_size_val" class="dval">32px</span></label>
+          <input type="range" id="d_logo_size" min="20" max="70" value="32" oninput="document.getElementById('logo_size_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Logo Up/Down <span id="logo_offset_y_val" class="dval">0px</span></label>
+          <input type="range" id="d_logo_offset_y" min="-20" max="60" value="0" oninput="document.getElementById('logo_offset_y_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Logo Left/Right <span id="logo_offset_x_val" class="dval">0px</span></label>
+          <input type="range" id="d_logo_offset_x" min="-20" max="60" value="0" oninput="document.getElementById('logo_offset_x_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">School Text ◀▶ <span id="school_offset_x_val" class="dval">0px</span></label>
+          <input type="range" id="d_school_offset_x" min="-60" max="60" value="0" oninput="document.getElementById('school_offset_x_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">School Text ▲▼ <span id="school_offset_y_val" class="dval">0px</span></label>
+          <input type="range" id="d_school_offset_y" min="-30" max="30" value="0" oninput="document.getElementById('school_offset_y_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Corner Radius <span id="radius_val" class="dval">12px</span></label>
+          <input type="range" id="d_radius" min="0" max="24" value="12" oninput="document.getElementById('radius_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Header Height <span id="header_height_val" class="dval">Auto</span></label>
+          <input type="range" id="d_header_height" min="30" max="100" value="0" oninput="document.getElementById('header_height_val').textContent=this.value==0?'Auto':this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">ID Card Tag</label>
+          <select class="form-control dcontrol" id="d_id_tag" onchange="updateDesignerPreview()">
+            <option value="none">None</option>
+            <option value="top">Top Banner</option>
+            <option value="bottom">Bottom Banner</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Accent Strip</label>
+          <select class="form-control dcontrol" id="d_accent_strip" onchange="updateDesignerPreview()">
+            <option value="none">None</option>
+            <option value="left">Left Edge</option>
+            <option value="right">Right Edge</option>
+            <option value="bottom">Bottom Edge</option>
+            <option value="top">Top Edge</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="designer-col">
+        <div class="dcol-title">🎨 Colors</div>
+
+        <div class="drow" id="row_color_primary">
+          <label class="dlabel">Primary</label>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;">
+            <input type="color" id="d_color_primary" value="#4f46e5" oninput="updateDesignerPreview()" class="dcolor">
+            <label class="toggle" style="margin:0;flex-shrink:0;" title="Show/Hide"><input type="checkbox" id="d_show_primary" checked onchange="toggleColorVisibility('primary')"><span class="toggle-slider"></span></label>
+            <span class="color-hidden-badge" id="badge_primary" style="display:none;">Off</span>
+          </div>
+        </div>
+
+        <div class="drow" id="row_color_secondary">
+          <label class="dlabel">Secondary</label>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;">
+            <input type="color" id="d_color_secondary" value="#818cf8" oninput="updateDesignerPreview()" class="dcolor">
+            <label class="toggle" style="margin:0;flex-shrink:0;" title="Show/Hide"><input type="checkbox" id="d_show_secondary" checked onchange="toggleColorVisibility('secondary')"><span class="toggle-slider"></span></label>
+            <span class="color-hidden-badge" id="badge_secondary" style="display:none;">Off</span>
+          </div>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Text</label>
+          <input type="color" id="d_color_text" value="#1f2937" oninput="updateDesignerPreview()" class="dcolor">
+        </div>
+
+        <div class="drow" id="row_color_bg">
+          <label class="dlabel">Card BG</label>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;">
+            <input type="color" id="d_color_bg" value="#ffffff" oninput="updateDesignerPreview()" class="dcolor">
+            <label class="toggle" style="margin:0;flex-shrink:0;" title="Show/Hide"><input type="checkbox" id="d_show_bg" checked onchange="toggleColorVisibility('bg')"><span class="toggle-slider"></span></label>
+            <span class="color-hidden-badge" id="badge_bg" style="display:none;">Off</span>
+          </div>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">BG Style</label>
+          <select class="form-control dcontrol" id="d_bg_style" onchange="updateDesignerPreview()">
+            <option value="solid">Solid</option>
+            <option value="gradient_lr">Gradient →</option>
+            <option value="gradient_tb">Gradient ↓</option>
+            <option value="gradient_diag">Gradient ↘</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">BG Img Opacity <span id="bgop_val" class="dval">15%</span></label>
+          <input type="range" id="d_bg_opacity" min="0" max="100" value="15" oninput="document.getElementById('bgop_val').textContent=this.value+'%'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">BG Pattern</label>
+          <select class="form-control dcontrol" id="d_bg_pattern" onchange="updateDesignerPreview()">
+            <option value="none">None</option>
+            <option value="dots">Polka Dots</option>
+            <option value="lines">Diagonal Lines</option>
+            <option value="grid">Grid Pattern</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Card Shadow</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_card_shadow" checked onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <label class="dlabel" style="margin-bottom:2px;">Quick Themes</label>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            <div onclick="applyTheme('royal')" class="dtheme" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6)" title="Royal"></div>
+            <div onclick="applyTheme('emerald')" class="dtheme" style="background:linear-gradient(135deg,#065f46,#10b981)" title="Emerald"></div>
+            <div onclick="applyTheme('sunset')" class="dtheme" style="background:linear-gradient(135deg,#7c3aed,#ec4899)" title="Sunset"></div>
+            <div onclick="applyTheme('maroon')" class="dtheme" style="background:linear-gradient(135deg,#7f1d1d,#dc2626)" title="Maroon"></div>
+            <div onclick="applyTheme('gold')" class="dtheme" style="background:linear-gradient(135deg,#92400e,#f59e0b)" title="Gold"></div>
+            <div onclick="applyTheme('slate')" class="dtheme" style="background:linear-gradient(135deg,#1e293b,#64748b)" title="Slate"></div>
+            <div onclick="applyTheme('teal')" class="dtheme" style="background:linear-gradient(135deg,#134e4a,#14b8a6)" title="Teal"></div>
+            <div onclick="applyTheme('rose')" class="dtheme" style="background:linear-gradient(135deg,#881337,#f43f5e)" title="Rose"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="designer-col">
+        <div class="dcol-title">🔤 Typography</div>
+
+        <div class="drow">
+          <label class="dlabel">School Font</label>
+          <select class="form-control dcontrol" id="d_font_school" onchange="updateDesignerPreview()">
+            <option value="Arial, sans-serif">Arial</option>
+            <option value="'Times New Roman', serif">Times New Roman</option>
+            <option value="Georgia, serif">Georgia</option>
+            <option value="'Courier New', monospace">Courier New</option>
+            <option value="Verdana, sans-serif">Verdana</option>
+            <option value="Tahoma, sans-serif">Tahoma</option>
+            <option value="Impact, sans-serif">Impact</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Data Font</label>
+          <select class="form-control dcontrol" id="d_font_data" onchange="updateDesignerPreview()">
+            <option value="Arial, sans-serif">Arial</option>
+            <option value="'Times New Roman', serif">Times New Roman</option>
+            <option value="Georgia, serif">Georgia</option>
+            <option value="Verdana, sans-serif">Verdana</option>
+            <option value="Tahoma, sans-serif">Tahoma</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">School Size <span id="schfont_val" class="dval">14px</span></label>
+          <input type="range" id="d_school_font_size" min="10" max="40" value="14" oninput="document.getElementById('schfont_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Data Size <span id="datafont_val" class="dval">10px</span></label>
+          <input type="range" id="d_data_font_size" min="7" max="14" value="10" oninput="document.getElementById('datafont_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Text Align</label>
+          <select class="form-control dcontrol" id="d_text_align" onchange="updateDesignerPreview()">
+            <option value="left">Left</option>
+            <option value="center">Center</option>
+            <option value="right">Right</option>
+            <option value="justify">Justify</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Label Style</label>
+          <select class="form-control dcontrol" id="d_label_style" onchange="updateDesignerPreview()">
+            <option value="bold_colon">Bold Label:</option>
+            <option value="muted">Muted Label</option>
+            <option value="underline">Underline</option>
+            <option value="box">Boxed</option>
+            <option value="pill">Pill Badge</option>
+            <option value="sidebar">Side Accent Bar</option>
+            <option value="nolabel">No Label (Value Only)</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Dashed Line (under value)</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_show_dashed_line" checked onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Text Shadow</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_text_shadow" onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Field Gap <span id="field_gap_val" class="dval">3px</span></label>
+          <input type="range" id="d_field_gap" min="0" max="15" value="3" oninput="document.getElementById('field_gap_val').textContent=this.value+'px'; updateDesignerPreview()" class="dslider">
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Name Highlight</label>
+          <select class="form-control dcontrol" id="d_name_highlight" onchange="updateDesignerPreview()">
+            <option value="none">Normal</option>
+            <option value="bold_color">Bold + Primary Color</option>
+            <option value="box">Background Box</option>
+          </select>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Label Weight</label>
+          <select class="form-control dcontrol" id="d_label_weight" onchange="updateDesignerPreview()">
+            <option value="bold">Bold</option>
+            <option value="normal">Normal</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="designer-col">
+        <div class="dcol-title">📋 Fields <span style="font-size:10px;font-weight:400;opacity:0.7;">(↑↓ reorder)</span></div>
+        <div id="d_field_toggles" style="display:flex;flex-direction:column;gap:3px;"></div>
+
+        <div class="drow" style="margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px;">
+          <label class="dlabel">Sec. Divider</label>
+          <select class="form-control dcontrol" id="d_section_divider" onchange="updateDesignerPreview()">
+            <option value="none">None</option>
+            <option value="solid">Solid Line</option>
+            <option value="dashed">Dashed Line</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="designer-col">
+        <div class="dcol-title">✨ Extras</div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+          <label class="dlabel">Photo Border</label>
+          <div style="display:flex;gap:4px;width:100%;">
+            <input type="color" id="d_photo_border_color" value="#4f46e5" oninput="updateDesignerPreview()" class="dcolor" style="width:25px;">
+            <input type="number" id="d_photo_border_width" value="2" min="0" max="10" oninput="updateDesignerPreview()" class="form-control dcontrol" style="width:40px;" title="Width (px)">
+            <select id="d_photo_border_style" onchange="updateDesignerPreview()" class="form-control dcontrol">
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;margin-top:5px;">
+          <label class="dlabel">Back Text</label>
+          <textarea id="d_back_text" class="form-control dcontrol" rows="2" placeholder="Custom back side message..." oninput="updateDesignerPreview()" style="width:100%;resize:none;font-size:10px;"></textarea>
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;margin-top:5px;">
+          <label class="dlabel">Custom CSS</label>
+          <textarea id="d_custom_css" class="form-control dcontrol" rows="2" placeholder=".custom-card-root { ... }" oninput="updateDesignerPreview()" style="width:100%;resize:none;font-family:monospace;font-size:9px;"></textarea>
+        </div>
+
+        <div class="drow" style="margin-top: 10px;">
+          <label class="dlabel">QR Code</label>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;">
+            <label class="toggle" style="margin:0;"><input type="checkbox" id="d_show_qr" onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+            <select class="form-control dcontrol" id="d_qr_data" onchange="updateDesignerPreview()" style="font-size:11px;">
+              <option value="roll">Roll No</option>
+              <option value="name">Name</option>
+              <option value="mobile">Mobile</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Barcode</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_show_barcode" onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Signature</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_show_sign" checked onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow">
+          <label class="dlabel">Border</label>
+          <label class="toggle" style="margin:0;"><input type="checkbox" id="d_show_border" checked onchange="updateDesignerPreview()"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+          <label class="dlabel">Watermark</label>
+          <input type="text" id="d_watermark" class="form-control dcontrol" placeholder="e.g. SCHOOL NAME" oninput="updateDesignerPreview()" style="width:100%;font-size:11px;">
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+          <label class="dlabel">Footer Text</label>
+          <input type="text" id="d_footer_text" class="form-control dcontrol" placeholder="e.g. Valid 2024-25" oninput="updateDesignerPreview()" style="width:100%;font-size:11px;">
+        </div>
+
+        <div class="drow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+          <label class="dlabel">Emergency</label>
+          <input type="text" id="d_emergency_label" class="form-control dcontrol" placeholder="Principal: 98765..." oninput="updateDesignerPreview()" style="width:100%;font-size:11px;">
+        </div>
+      </div>
+
+    </div></div>
+
+  <div id="floating-preview-panel" style="display:none;">
+    <div class="fp-header" id="fp-drag-handle">
+      <span>🪪 Live Preview</span>
+      <div class="fp-btns">
+        <button onclick="toggleFPCollapse()" id="fp-collapse-btn" title="Minimize">─</button>
+        <button onclick="toggleDesignerBack()" title="Flip Card">🔄</button>
+        <button onclick="hideFloatingPreview()" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="fp-body">
+      <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;">
+        <select class="form-control" id="designer_preview_student" onchange="updateDesignerPreview()" style="font-size:11px;padding:5px 8px;flex:1;">
+          <option value="">-- Sample Preview --</option>
+        </select>
+      </div>
+      <div class="fp-controls">
+        <button class="btn btn-sm btn-outline" onclick="changeZoom(-0.1)" style="padding:3px 8px;font-size:14px;">−</button>
+        <span style="font-size:11px;font-weight:600;min-width:44px;text-align:center;" id="zoom_label">100%</span>
+        <button class="btn btn-sm btn-outline" onclick="changeZoom(0.1)" style="padding:3px 8px;font-size:14px;">+</button>
+        <button class="btn btn-sm btn-outline" onclick="resetZoom()" style="padding:2px 7px;font-size:10px;">Reset</button>
+      </div>
+
+      <div id="designer_card_front" style="display:block;margin-bottom:12px;overflow:auto;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">FRONT SIDE</div>
+        <div id="designer_card_render" style="display:inline-block;box-shadow:0 8px 32px rgba(0,0,0,0.15);border-radius:12px;overflow:hidden;"></div>
+      </div>
+
+      <div id="designer_card_back" style="display:none;margin-bottom:12px;overflow:auto;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">BACK SIDE</div>
+        <div id="designer_back_render" style="display:inline-block;box-shadow:0 8px 32px rgba(0,0,0,0.15);border-radius:12px;overflow:hidden;"></div>
+      </div>
+
+      <div style="background:#f9fafb;border-radius:6px;padding:6px 12px;font-size:11px;color:var(--text-muted);display:inline-flex;gap:16px;">
+        <span>📏 <span id="d_size_label">3.37" × 2.13"</span></span>
+        <span>🖨️ 300 DPI</span>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="btn btn-sm btn-success" onclick="printSingleCard()" style="width:100%;">🖨️ Print This Card</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="batchPrintContainer" style="display:none;"></div>
+
+  <div id="printCardArea"></div>
+
+</main>
+
+<div class="modal-overlay" id="schoolModalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="schoolModalTitle">Add/Edit School</h3>
+      <button class="btn btn-sm btn-outline" onclick="closeModal('schoolModalOverlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="s_id">
+      <div class="form-row">
+        <div class="form-group"><label>School Name *</label><input type="text" id="s_name" class="form-control"></div>
+        <div class="form-group"><label>Board</label><input type="text" id="s_board" class="form-control" placeholder="e.g. CBSE"></div>
+      </div>
+      <div class="form-group"><label>Full Address</label><input type="text" id="s_address" class="form-control"></div>
+      <div class="form-row">
+        <div class="form-group"><label>City</label><input type="text" id="s_city" class="form-control"></div>
+        <div class="form-group"><label>State</label><input type="text" id="s_state" class="form-control"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Contact No (Phone)</label><input type="text" id="s_phone" class="form-control"></div>
+        <div class="form-group"><label>Academic Session</label><input type="text" id="s_session" class="form-control" placeholder="2024-25"></div>
+      </div>
+      
+      <h4 style="font-size:14px; margin: 20px 0 10px; padding-bottom:5px; border-bottom:1px solid #eee;">ID Card Assets</h4>
+      <div class="grid-3">
+        <div class="upload-box">
+          <label style="font-size:12px; font-weight:600; display:block;">Background Image</label>
+          <input type="file" accept="image/*" onchange="handleAssetUpload(event, 's_bg')">
+          <img id="s_bg_preview" style="display:none;">
+        </div>
+        <div class="upload-box">
+          <label style="font-size:12px; font-weight:600; display:block;">School Logo</label>
+          <input type="file" accept="image/*" onchange="handleAssetUpload(event, 's_logo')">
+          <img id="s_logo_preview" style="display:none;">
+        </div>
+        <div class="upload-box">
+          <label style="font-size:12px; font-weight:600; display:block;">Principal Signature</label>
+          <input type="file" accept="image/*" onchange="handleAssetUpload(event, 's_sign')">
+          <img id="s_sign_preview" style="display:none;">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('schoolModalOverlay')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSchool()">Save School</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="subuserModalOverlay">
+  <div class="modal" style="max-width: 560px;">
+    <div class="modal-header">
+      <h3 id="subuserModalTitle">Add/Edit Sub Admin</h3>
+      <button class="btn btn-sm btn-outline" onclick="closeModal('subuserModalOverlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="su_id">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="su_name" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Login ID / Username</label>
+          <input type="text" id="su_username" class="form-control" placeholder="user@school">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="text" id="su_password" class="form-control" placeholder="Set login password">
+        <p style="font-size:11px;color:#9ca3af;margin-top:4px;">Sub Admin is password se login karega.</p>
+      </div>
+      <div class="form-group">
+        <label>Assign to School</label>
+        <select id="su_school" class="form-control" onchange="loadClassesForSubAdmin()"></select>
+      </div>
+
+      <div class="form-group" style="background:#f0f4ff; padding: 14px; border-radius: 10px; border: 1px solid #c7d2fe;">
+        <label style="margin-bottom:10px; color: #3730a3; font-weight:600;">📚 Assign Classes</label>
+        <p style="font-size:11px; color:#6b7280; margin-bottom:10px;">Select which classes this Sub Admin can manage. Leave blank = all classes.</p>
+        
+        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm btn-outline" onclick="suAdminSelectAllClasses()">✅ Select All</button>
+          <button type="button" class="btn btn-sm btn-outline" onclick="suAdminClearClasses()">❌ Clear All</button>
+          <div style="margin-left:auto;">
+            <input type="text" id="su_new_class" class="form-control" placeholder="Add class e.g. 6" style="width:120px; display:inline-block; padding:6px 10px; font-size:12px;">
+            <button type="button" class="btn btn-sm btn-primary" onclick="suAdminAddCustomClass()" style="margin-left:4px;">+ Add</button>
+          </div>
+        </div>
+        
+        <div id="su_classes_grid" style="display:flex; flex-wrap:wrap; gap:8px; min-height:40px; background:white; padding:10px; border-radius:8px; border:1px solid #e5e7eb;">
+          <span id="su_classes_placeholder" style="color:#9ca3af; font-size:12px;">Select a school first...</span>
+        </div>
+      </div>
+
+      <div class="form-group" style="background:#f9fafb; padding: 12px; border-radius: 8px;">
+        <label style="margin-bottom:8px; font-weight:600;">🔐 Permissions</label>
+        <div style="display:flex; gap:16px; font-size:13px; flex-wrap:wrap;">
+          <label><input type="checkbox" id="su_perm_add" checked> ➕ Add Students</label>
+          <label><input type="checkbox" id="su_perm_edit" checked> ✏️ Edit Students</label>
+          <label><input type="checkbox" id="su_perm_delete"> 🗑️ Delete Students</label>
+          <label><input type="checkbox" id="su_perm_print" checked> 🖨️ Print Cards</label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('subuserModalOverlay')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSubUser()">Save Sub Admin</button>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div id="toast">Message here</div>
+
+<script>
+  // Global State and Storage Logic (Kept Unchanged)
+  let state = {
+    schools: [],
+    subusers: [],
+    students: [],
+    formConfigs: {},
+    designTemplates: {},
+    activeRole: 'admin',
+    activeSchoolId: null,
+    adminPassword: 'admin123'
+  };
+
+  let loginTab = 'admin';
+
+  const BASE_FIELDS = [
+    { id: 'photo', label: 'Student Photo', type: 'file' },
+    { id: 'name', label: 'Student Name', type: 'text' },
+    { id: 'father', label: 'Father Name', type: 'text' },
+    { id: 'class', label: 'Class', type: 'text' },
+    { id: 'section', label: 'Section', type: 'text' },
+    { id: 'roll', label: 'Roll No', type: 'text' },
+    { id: 'dob', label: 'Date of Birth', type: 'date' },
+    { id: 'mobile', label: 'Mobile No', type: 'text' },
+    { id: 'blood', label: 'Blood Group', type: 'text' },
+    { id: 'address', label: 'Address', type: 'text' }
+  ];
+
+  let tempAssets = { s_bg: '', s_logo: '', s_sign: '', student_photo: '' };
+  let editingStudentId = null;
+  const photoCache = {};
+
+  async function resolvePhoto(keyOrData) {
+    if(!keyOrData) return '';
+    if(keyOrData.startsWith('data:')) return keyOrData;
+    if(photoCache[keyOrData]) return photoCache[keyOrData];
+    try {
+      const data = await dbGet(keyOrData);
+      if(data) photoCache[keyOrData] = data;
+      return data || '';
+    } catch(e) { return ''; }
+  }
+
+  async function preloadPhotos(students) {
+    const keys = students.map(s => s.photo).filter(p => p && !p.startsWith('data:') && !photoCache[p]);
+    await Promise.all(keys.map(k => resolvePhoto(k)));
+  }
+
+  function showToast(msg, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#ef4444' : '#1f2937';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3000);
+  }
+
+  let db = null;
+  function initDB() {
+    return new Promise((resolve, reject) => {
+      if(db) return resolve(db);
+      try {
+        if(!window.indexedDB) { reject(new Error('IndexedDB not available in this browser/context')); return; }
+        const req = indexedDB.open('SchoolIdDB', 1);
+        req.onupgradeneeded = (e) => {
+          const d = e.target.result;
+          if(!d.objectStoreNames.contains('photos')) d.createObjectStore('photos');
+        };
+        req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+        req.onerror = () => reject(req.error);
+      } catch(err) {
+        // Some browsers throw synchronously (e.g. file:// origin restrictions, private mode).
+        reject(err);
+      }
+    });
+  }
+  function dbSet(key, value) {
+    return initDB().then(d => new Promise((res, rej) => {
+      const tx = d.transaction('photos', 'readwrite');
+      tx.objectStore('photos').put(value, key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    }));
+  }
+  function dbGet(key) {
+    return initDB().then(d => new Promise((res, rej) => {
+      const tx = d.transaction('photos', 'readonly');
+      const req = tx.objectStore('photos').get(key);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => rej(req.error);
+    }));
+  }
+  function dbGetAll() {
+    return initDB().then(d => new Promise((res, rej) => {
+      const tx = d.transaction('photos', 'readonly');
+      const store = tx.objectStore('photos');
+      const result = {};
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if(cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
+        else res(result);
+      };
+      req.onerror = () => rej(req.error);
+    }));
+  }
+
+  // Scans state for any accidentally-embedded base64 data (data:...) that should have gone
+  // to IndexedDB instead, and strips it so a single bloated field doesn't block the whole save.
+  function stripStrayBase64(obj) {
+    if(Array.isArray(obj)) { obj.forEach(stripStrayBase64); return; }
+    if(obj && typeof obj === 'object') {
+      Object.keys(obj).forEach(k => {
+        const v = obj[k];
+        if(typeof v === 'string' && v.startsWith('data:') && v.length > 2000) {
+          obj[k] = ''; // drop oversized inline data; real copy should already be in IndexedDB
+        } else if(v && typeof v === 'object') {
+          stripStrayBase64(v);
+        }
+      });
+    }
+  }
+
+  // Save each category separately — schools/settings always save even if students data is huge.
+  const SAVE_KEYS = {
+    meta:            'sida_meta',
+    schools:         'sida_schools',
+    subusers:        'sida_subusers',
+    formConfigs:     'sida_formConfigs',
+    designTemplates: 'sida_designTemplates',
+    students:        'sida_students',
+  };
+
+  function saveLocal() {
+    const chunks = {
+      meta:            { activeSchoolId: state.activeSchoolId, activeRole: state.activeRole, adminPassword: state.adminPassword },
+      schools:         state.schools,
+      subusers:        state.subusers,
+      formConfigs:     state.formConfigs,
+      designTemplates: state.designTemplates,
+      students:        state.students,
+    };
+    let anyFail = false;
+    for (const chunk of Object.keys(SAVE_KEYS)) {
+      const key = SAVE_KEYS[chunk];
+      try {
+        localStorage.setItem(key, JSON.stringify(chunks[chunk]));
+      } catch(err) {
+        try {
+          const cleaned = JSON.parse(JSON.stringify(chunks[chunk]));
+          stripStrayBase64(cleaned);
+          localStorage.setItem(key, JSON.stringify(cleaned));
+          if(chunk === 'students') showToast('⚠️ Kuch image data clean kiya gaya, save ho gaya.', true);
+        } catch(err2) {
+          if(chunk === 'students') {
+            showToast('⚠️ Students data save nahi hua (storage full). Schools safe hain. Backup Export karein aur purane students hatayein.', true);
+          } else {
+            showToast('⚠️ ' + chunk + ' save nahi hua! Browser storage full hai.', true);
+          }
+          anyFail = true;
+        }
+      }
+    }
+    return !anyFail;
+  }
+
+  function loadLocal() {
+    const metaRaw = localStorage.getItem(SAVE_KEYS.meta);
+    if (metaRaw) {
+      // New split-key format
+      try {
+        const meta = JSON.parse(metaRaw);
+        if(meta.activeSchoolId !== undefined) state.activeSchoolId = meta.activeSchoolId;
+        if(meta.activeRole !== undefined) state.activeRole = meta.activeRole;
+        if(meta.adminPassword !== undefined) state.adminPassword = meta.adminPassword;
+      } catch(e) {}
+      for (const chunk of Object.keys(SAVE_KEYS)) {
+        if(chunk === 'meta') continue;
+        const raw = localStorage.getItem(SAVE_KEYS[chunk]);
+        if(raw) { try { state[chunk] = JSON.parse(raw); } catch(e) {} }
+      }
+    } else {
+      // Fallback: legacy single-key format
+      const legacy = localStorage.getItem('schoolIdAppV3');
+      if(legacy) {
+        try {
+          const d = JSON.parse(legacy);
+          state = { ...state, ...d };
+          saveLocal(); // migrate to split keys
+          localStorage.removeItem('schoolIdAppV3');
+        } catch(e) {}
+      }
+    }
+    if(!state.formConfigs['default']) state.formConfigs['default'] = { baseFields: {}, customFields: [] };
+  }
+
+  // ============================================================
+  // FIREBASE SYNC — Cloud Save / Load (layered on top of localStorage)
+  // ============================================================
+
+  // Debounce timer so rapid edits don't spam Firestore
+  let _fbSaveTimer = null;
+
+  // Surfaces cloud sync failures to the user instead of letting them fail silently.
+  // This is the key visibility fix: earlier, if Firestore rules blocked a device
+  // (e.g. no Authentication set up), nothing told the user — it just looked like
+  // everything saved fine while cross-device sync quietly never happened.
+  let _fbErrorToastShown = false;
+  let _fbHadSyncError = false;
+  document.addEventListener('firebaseSyncError', (e) => {
+    _fbHadSyncError = true;
+    if(_fbErrorToastShown) return;
+    _fbErrorToastShown = true;
+    const { error } = e.detail || {};
+    showToast(`⚠️ Cloud sync fail: ${error || 'unknown error'}. Firebase Console me Authentication > Anonymous enable karein aur Firestore rules check karein.`, true);
+  });
+
+  // Called automatically after every saveLocal() — syncs to Firestore in background
+  async function saveToFirebase() {
+    if(typeof window._fbSaveChunk !== 'function') return; // Firebase not ready yet
+    const chunks = {
+      meta:            { activeSchoolId: state.activeSchoolId, activeRole: state.activeRole, adminPassword: state.adminPassword },
+      schools:         state.schools,
+      subusers:        state.subusers,
+      formConfigs:     state.formConfigs,
+      designTemplates: state.designTemplates,
+      students:        state.students,
+    };
+    // Strip base64 before sending to Firestore (images stay in Firebase Storage)
+    const cleaned = JSON.parse(JSON.stringify(chunks));
+    stripStrayBase64(cleaned);
+    for(const key of Object.keys(cleaned)) {
+      await window._fbSaveChunk(key, cleaned[key]);
+    }
+  }
+
+  // Wrap saveLocal to also trigger Firebase sync (debounced 1.5s)
+  const _origSaveLocal = saveLocal;
+  window.saveLocal = function() {
+    const result = _origSaveLocal();
+    clearTimeout(_fbSaveTimer);
+    _fbSaveTimer = setTimeout(() => saveToFirebase(), 1500);
+    return result;
+  };
+
+  // Load all data from Firestore and merge into state (called once at boot if Firebase ready)
+  async function loadFromFirebase() {
+    if(typeof window._fbLoadChunk !== 'function') return false;
+    showToast('☁️ Cloud se data load ho raha hai...');
+    _fbHadSyncError = false;
+    try {
+      const meta = await window._fbLoadChunk('meta');
+      if(meta) {
+        if(meta.activeSchoolId !== undefined) state.activeSchoolId = meta.activeSchoolId;
+        if(meta.activeRole !== undefined) state.activeRole = meta.activeRole;
+        if(meta.adminPassword !== undefined) state.adminPassword = meta.adminPassword;
+      }
+      const keys = ['schools','subusers','formConfigs','designTemplates','students'];
+      for(const k of keys) {
+        const data = await window._fbLoadChunk(k);
+        if(data !== null && data !== undefined) state[k] = data;
+      }
+      if(!state.formConfigs['default']) state.formConfigs['default'] = { baseFields: {}, customFields: [] };
+      // Also sync to localStorage as cache
+      const _orig = window.saveLocal;
+      window.saveLocal = _origSaveLocal; // temporarily use original to avoid re-triggering FB
+      _origSaveLocal();
+      window.saveLocal = _orig;
+      if(_fbHadSyncError) {
+        showToast('⚠️ Cloud se pura data load nahi ho saka, local data use ho raha hai.', true);
+      } else {
+        showToast('✅ Cloud data load ho gaya!');
+      }
+      return !_fbHadSyncError;
+    } catch(e) {
+      console.warn('Firebase load failed:', e);
+      showToast('⚠️ Cloud load fail, local data use ho raha hai.', true);
+      return false;
+    }
+  }
+
+  // Override dbSet to ALSO upload image to Firebase Storage
+  const _origDbSet = dbSet;
+  window.dbSet = async function(key, value) {
+    // Always save to IndexedDB first (local fallback)
+    try { await _origDbSet(key, value); } catch(e) {}
+    // Upload to Firebase Storage in background
+    if(typeof window._fbUploadImage === 'function' && value && value.startsWith('data:')) {
+      window._fbUploadImage(key, value).catch(()=>{});
+    }
+    return;
+  };
+
+  // Override dbGet to try Firebase Storage if IndexedDB misses
+  const _origDbGet = dbGet;
+  window.dbGet = async function(key) {
+    // Try IndexedDB first (fastest, local)
+    try {
+      const localData = await _origDbGet(key);
+      if(localData) return localData;
+    } catch(e) {}
+    // Fallback to Firebase Storage URL
+    if(typeof window._fbGetImageUrl === 'function') {
+      const url = await window._fbGetImageUrl(key);
+      if(url) return url; // returns HTTPS URL instead of base64 — works fine in <img src>
+    }
+    return null;
+  };
+
+  function compressImage(file, maxDim, quality, callback, format) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim) {
+          if(width > height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+        }
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          const useFormat = format || 'image/jpeg';
+          if(useFormat === 'image/jpeg') {
+            // JPEG has no transparency, so flatten onto a white background first.
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          callback(canvas.toDataURL(useFormat, quality));
+        } catch(err) { callback(e.target.result); }
+      };
+      img.onerror = () => callback(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function handleAssetUpload(e, targetKey) {
+    const file = e.target.files[0];
+    if(!file || !file.type.startsWith('image/')) return;
+    // Logo/signature stay modest in size but use PNG to preserve transparency (so circular/cut-out
+    // logos look correct on colored headers). Background images are stored in IndexedDB (not the
+    // quota-constrained localStorage), so they can be kept near-HD quality as JPEG.
+    const isLogoOrSign = targetKey === 's_logo' || targetKey === 's_sign';
+    let maxDim = isLogoOrSign ? 300 : (targetKey === 's_bg' ? 1200 : 400);
+    let quality = isLogoOrSign ? 0.92 : (targetKey === 's_bg' ? 0.88 : 0.8);
+    let format = isLogoOrSign ? 'image/png' : 'image/jpeg';
+    
+    showToast('Uploading...');
+    compressImage(file, maxDim, quality, async (dataUrl) => {
+      try {
+        await dbSet(targetKey, dataUrl);
+        tempAssets[targetKey] = dataUrl;
+        const preview = document.getElementById(targetKey + '_preview');
+        if(preview) { preview.src = dataUrl; preview.style.display = 'block'; }
+        showToast('✅ Uploaded');
+      } catch(err) {
+        tempAssets[targetKey] = dataUrl;
+        showToast('✅ Uploaded to memory');
+      }
+    }, format);
+  }
+
+  // General App Functions (Navigation, School, Subuser, Forms, Print Preview logic untouched for brevity)
+  function showPage(pageId) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#navMenu a').forEach(a => a.classList.remove('active'));
+    const page = document.getElementById('page-' + pageId);
+    const nav = document.getElementById('nav-' + pageId);
+    if(page) page.classList.add('active');
+    if(nav) nav.classList.add('active');
+    const fp = document.getElementById('floating-preview-panel');
+    if(fp) { fp.style.display = (pageId === 'card-designer') ? 'flex' : 'none'; }
+
+    const titleEl = document.getElementById('pageTitle');
+    const titles = {
+      dashboard: 'Dashboard', schools: 'Schools', subusers: 'Sub Admins', 'form-builder': 'Form Builder',
+      students: 'Students List', 'add-student': 'Add Student', preview: 'Print Cards', 'card-designer': 'ID Card Designer'
+    };
+    if(titleEl) titleEl.textContent = titles[pageId] || pageId;
+
+    if(pageId === 'card-designer') initCardDesigner();
+    else if(pageId === 'schools') renderSchoolsList();
+    else if(pageId === 'subusers') renderSubUsersList();
+    else if(pageId === 'students') renderStudentsList();
+    else if(pageId === 'add-student') renderAddStudentForm();
+    else if(pageId === 'form-builder') { populateFormBuilderSchoolSelect(); loadFormBuilderConfig(); }
+    else if(pageId === 'preview') initPrintPage();
+    else if(pageId === 'dashboard') updateSidebarBadge();
+  }
+  function openModal(id) { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+  // ============================================================
+  // ROLE SIMULATION
+  // ============================================================
+  function populateRoleSimulator() {
+    const sel = document.getElementById('roleSimulator');
+    if(!sel) return;
+    const options = [{ id: 'admin', label: 'Super Admin' }]
+      .concat(state.subusers.map(su => ({ id: su.id, label: `${su.name} (Sub Admin)` })));
+    sel.innerHTML = options.map(o => `<option value="${o.id}">${o.label}</option>`).join('');
+    sel.value = state.activeRole || 'admin';
+  }
+
+  function applyRoleVisibility() {
+    const isAdmin = state.activeRole === 'admin';
+    document.querySelectorAll('.admin-only').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
+  }
+
+  function changeSimulationRole() {
+    const sel = document.getElementById('roleSimulator');
+    state.activeRole = sel ? sel.value : 'admin';
+
+    if(state.activeRole !== 'admin') {
+      const su = state.subusers.find(s => s.id === state.activeRole);
+      if(su && su.schoolId) state.activeSchoolId = su.schoolId;
+    }
+    applyRoleVisibility();
+    updateSidebarBadge();
+    saveLocal();
+    showToast(state.activeRole === 'admin' ? '🎭 Switched to Super Admin' : '🎭 Simulating Sub Admin view');
+    const activePage = document.querySelector('.page.active');
+    if(activePage) showPage(activePage.id.replace('page-', ''));
+  }
+
+  // ============================================================
+  // SIDEBAR BADGE & DASHBOARD STATS
+  // ============================================================
+  function updateSidebarBadge() {
+    const school = state.schools.find(s => s.id === state.activeSchoolId);
+    const nameEl = document.getElementById('sbName');
+    const cityEl = document.getElementById('sbCity');
+    if(nameEl) nameEl.textContent = school ? school.name : 'No School Active';
+    if(cityEl) cityEl.textContent = school ? (school.city || '--') : '--';
+
+    const statSchools = document.getElementById('stat-schools');
+    const statStudents = document.getElementById('stat-students');
+    const statSubusers = document.getElementById('stat-subusers');
+    if(statSchools) statSchools.textContent = state.schools.length;
+    if(statStudents) statStudents.textContent = state.students.length;
+    if(statSubusers) statSubusers.textContent = state.subusers.length;
+
+    applyRoleVisibility();
+  }
+
+  // ============================================================
+  // SCHOOLS CRUD
+  // ============================================================
+  function openSchoolModal(schoolId) {
+    tempAssets = { s_bg: '', s_logo: '', s_sign: '', student_photo: '' };
+    document.getElementById('s_id').value = '';
+    ['s_name','s_board','s_address','s_city','s_state','s_phone','s_session'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.value = '';
+    });
+    ['s_bg_preview','s_logo_preview','s_sign_preview'].forEach(id => {
+      const el = document.getElementById(id); if(el) { el.src = ''; el.style.display = 'none'; }
+    });
+    document.getElementById('schoolModalTitle').textContent = 'Add School';
+
+    if(schoolId) {
+      const school = state.schools.find(s => s.id === schoolId);
+      if(school) {
+        document.getElementById('schoolModalTitle').textContent = 'Edit School';
+        document.getElementById('s_id').value = school.id;
+        document.getElementById('s_name').value = school.name || '';
+        document.getElementById('s_board').value = school.board || '';
+        document.getElementById('s_address').value = school.address || '';
+        document.getElementById('s_city').value = school.city || '';
+        document.getElementById('s_state').value = school.state || '';
+        document.getElementById('s_phone').value = school.phone || '';
+        document.getElementById('s_session').value = school.session || '';
+
+        ['bg','logo','sign'].forEach(async (k) => {
+          const stored = school[k];
+          if(!stored) return;
+          const dataUrl = await resolvePhoto(stored);
+          if(dataUrl) {
+            tempAssets['s_' + k] = stored;
+            const preview = document.getElementById('s_' + k + '_preview');
+            if(preview) { preview.src = dataUrl; preview.style.display = 'block'; }
+          }
+        });
+      }
+    }
+    openModal('schoolModalOverlay');
+  }
+
+  async function saveSchool() {
+    const name = document.getElementById('s_name').value.trim();
+    if(!name) return showToast('⚠️ School Name zaroori hai', true);
+
+    const id = document.getElementById('s_id').value || ('school_' + Date.now());
+    const isNew = !document.getElementById('s_id').value;
+
+    const assetKeyBg = tempAssets.s_bg ? (tempAssets.s_bg.startsWith('data:') ? 's_bg_' + id : tempAssets.s_bg) : '';
+    const assetKeyLogo = tempAssets.s_logo ? (tempAssets.s_logo.startsWith('data:') ? 's_logo_' + id : tempAssets.s_logo) : '';
+    const assetKeySign = tempAssets.s_sign ? (tempAssets.s_sign.startsWith('data:') ? 's_sign_' + id : tempAssets.s_sign) : '';
+
+    let bgSaved = true, logoSaved = true, signSaved = true;
+    try { if(tempAssets.s_bg && tempAssets.s_bg.startsWith('data:')) await dbSet(assetKeyBg, tempAssets.s_bg); } catch(e) { bgSaved = false; }
+    try { if(tempAssets.s_logo && tempAssets.s_logo.startsWith('data:')) await dbSet(assetKeyLogo, tempAssets.s_logo); } catch(e) { logoSaved = false; }
+    try { if(tempAssets.s_sign && tempAssets.s_sign.startsWith('data:')) await dbSet(assetKeySign, tempAssets.s_sign); } catch(e) { signSaved = false; }
+    if(!bgSaved || !logoSaved || !signSaved) {
+      showToast('⚠️ Kuch image save nahi ho payi (storage full). Baaki details save ho rahi hain.', true);
+    }
+
+    const school = {
+      id, name,
+      board: document.getElementById('s_board').value.trim(),
+      address: document.getElementById('s_address').value.trim(),
+      city: document.getElementById('s_city').value.trim(),
+      state: document.getElementById('s_state').value.trim(),
+      phone: document.getElementById('s_phone').value.trim(),
+      session: document.getElementById('s_session').value.trim(),
+      bg: bgSaved ? (assetKeyBg || (isNew ? '' : (state.schools.find(s => s.id === id)?.bg || ''))) : (state.schools.find(s => s.id === id)?.bg || ''),
+      logo: logoSaved ? (assetKeyLogo || (isNew ? '' : (state.schools.find(s => s.id === id)?.logo || ''))) : (state.schools.find(s => s.id === id)?.logo || ''),
+      sign: signSaved ? (assetKeySign || (isNew ? '' : (state.schools.find(s => s.id === id)?.sign || ''))) : (state.schools.find(s => s.id === id)?.sign || ''),
+    };
+
+    const idx = state.schools.findIndex(s => s.id === id);
+    if(idx >= 0) state.schools[idx] = school; else state.schools.push(school);
+
+    if(!state.activeSchoolId) state.activeSchoolId = id;
+    if(!state.formConfigs[id]) state.formConfigs[id] = { baseFields: {}, customFields: [] };
+
+    saveLocal();
+    closeModal('schoolModalOverlay');
+    renderSchoolsList();
+    updateSidebarBadge();
+    showToast(idx >= 0 ? '✅ School updated' : '✅ School added');
+  }
+
+  function deleteSchool(id) {
+    const school = state.schools.find(s => s.id === id);
+    if(!school) return;
+    if(!confirm(`"${school.name}" ko delete karein? Iske students bhi delete ho jayenge.`)) return;
+    state.schools = state.schools.filter(s => s.id !== id);
+    state.students = state.students.filter(s => s.schoolId !== id);
+    state.subusers = state.subusers.filter(s => s.schoolId !== id);
+    if(state.designTemplates) delete state.designTemplates[id];
+    if(state.formConfigs) delete state.formConfigs[id];
+    if(state.activeSchoolId === id) state.activeSchoolId = state.schools[0]?.id || null;
+    saveLocal();
+    renderSchoolsList();
+    updateSidebarBadge();
+    showToast('🗑️ School deleted');
+  }
+
+  function setActiveSchool(id) {
+    state.activeSchoolId = id;
+    saveLocal();
+    updateSidebarBadge();
+    showToast('🏫 Active school changed');
+  }
+
+  async function renderSchoolsList(filter) {
+    const tbody = document.getElementById('schoolsTbody');
+    if(!tbody) return;
+    const f = (filter || '').toLowerCase();
+    const list = state.schools.filter(s => !f || s.name.toLowerCase().includes(f) || (s.city || '').toLowerCase().includes(f));
+
+    if(list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">No schools added yet.</td></tr>`;
+      return;
+    }
+
+    const rows = await Promise.all(list.map(async (s) => {
+      const logo = await resolvePhoto(s.logo);
+      return `
+        <tr>
+          <td>${logo ? `<img src="${logo}" style="width:36px;height:36px;object-fit:contain;border-radius:6px;">` : '🏫'}</td>
+          <td>${s.name}</td>
+          <td>${s.city || '-'}</td>
+          <td>${s.phone || '-'}</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-sm btn-outline" onclick="openSchoolModal('${s.id}')">✏️ Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteSchool('${s.id}')">🗑️</button>
+            </div>
+          </td>
+        </tr>`;
+    }));
+    tbody.innerHTML = rows.join('');
+  }
+
+  // ============================================================
+  // SUB ADMINS CRUD
+  // ============================================================
+  function populateSchoolSelect(selectEl, selectedId) {
+    if(!selectEl) return;
+    selectEl.innerHTML = `<option value="">-- Select School --</option>` +
+      state.schools.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    if(selectedId) selectEl.value = selectedId;
+  }
+
+  function openSubUserModal(subId) {
+    document.getElementById('su_id').value = '';
+    document.getElementById('su_name').value = '';
+    document.getElementById('su_username').value = '';
+    document.getElementById('su_password').value = '';
+    document.getElementById('su_new_class').value = '';
+    document.getElementById('su_perm_add').checked = true;
+    document.getElementById('su_perm_edit').checked = true;
+    document.getElementById('su_perm_delete').checked = false;
+    document.getElementById('su_perm_print').checked = true;
+    document.getElementById('subuserModalTitle').textContent = 'Add Sub Admin';
+
+    const schoolSel = document.getElementById('su_school');
+    populateSchoolSelect(schoolSel);
+    subAdminAssignedClasses = [];
+
+    if(subId) {
+      const su = state.subusers.find(s => s.id === subId);
+      if(su) {
+        document.getElementById('subuserModalTitle').textContent = 'Edit Sub Admin';
+        document.getElementById('su_id').value = su.id;
+        document.getElementById('su_name').value = su.name || '';
+        document.getElementById('su_username').value = su.username || '';
+        document.getElementById('su_password').value = su.password || '';
+        schoolSel.value = su.schoolId || '';
+        document.getElementById('su_perm_add').checked = su.perms?.add !== false;
+        document.getElementById('su_perm_edit').checked = su.perms?.edit !== false;
+        document.getElementById('su_perm_delete').checked = !!su.perms?.delete;
+        document.getElementById('su_perm_print').checked = su.perms?.print !== false;
+        subAdminAssignedClasses = [...(su.classes || [])];
+      }
+    }
+    loadClassesForSubAdmin();
+    openModal('subuserModalOverlay');
+  }
+
+  let subAdminAssignedClasses = [];
+
+  function getClassesForSchool(schoolId) {
+    const classes = state.students.filter(s => s.schoolId === schoolId).map(s => s.class).filter(Boolean);
+    return [...new Set(classes)].sort();
+  }
+
+  function renderSubAdminClassesGrid() {
+    const grid = document.getElementById('su_classes_grid');
+    const schoolId = document.getElementById('su_school').value;
+    if(!grid) return;
+    if(!schoolId) {
+      grid.innerHTML = `<span id="su_classes_placeholder" style="color:#9ca3af;font-size:12px;">Select a school first...</span>`;
+      return;
+    }
+    const allClasses = [...new Set([...getClassesForSchool(schoolId), ...subAdminAssignedClasses])].sort();
+    if(allClasses.length === 0) {
+      grid.innerHTML = `<span style="color:#9ca3af;font-size:12px;">No classes yet — add one above.</span>`;
+      return;
+    }
+    grid.innerHTML = allClasses.map(c => {
+      const checked = subAdminAssignedClasses.includes(c);
+      return `<label style="display:flex;align-items:center;gap:5px;background:${checked ? '#e0e7ff' : '#f3f4f6'};padding:5px 10px;border-radius:16px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" value="${c}" ${checked ? 'checked' : ''} onchange="toggleSubAdminClass('${c}', this.checked)" style="margin:0;">
+        Class ${c}
+      </label>`;
+    }).join('');
+  }
+
+  function toggleSubAdminClass(cls, isChecked) {
+    if(isChecked) { if(!subAdminAssignedClasses.includes(cls)) subAdminAssignedClasses.push(cls); }
+    else { subAdminAssignedClasses = subAdminAssignedClasses.filter(c => c !== cls); }
+  }
+
+  function loadClassesForSubAdmin() {
+    renderSubAdminClassesGrid();
+  }
+
+  function suAdminSelectAllClasses() {
+    const schoolId = document.getElementById('su_school').value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    subAdminAssignedClasses = getClassesForSchool(schoolId);
+    renderSubAdminClassesGrid();
+  }
+
+  function suAdminClearClasses() {
+    subAdminAssignedClasses = [];
+    renderSubAdminClassesGrid();
+  }
+
+  function suAdminAddCustomClass() {
+    const input = document.getElementById('su_new_class');
+    const val = input.value.trim();
+    if(!val) return;
+    if(!subAdminAssignedClasses.includes(val)) subAdminAssignedClasses.push(val);
+    input.value = '';
+    renderSubAdminClassesGrid();
+  }
+
+  function saveSubUser() {
+    const name = document.getElementById('su_name').value.trim();
+    const username = document.getElementById('su_username').value.trim();
+    const password = document.getElementById('su_password').value;
+    const schoolId = document.getElementById('su_school').value;
+    const id = document.getElementById('su_id').value || ('sub_' + Date.now());
+
+    if(!name || !username) return showToast('⚠️ Name aur Username zaroori hai', true);
+    if(!password) return showToast('⚠️ Password zaroori hai', true);
+    if(!schoolId) return showToast('⚠️ School assign karna zaroori hai', true);
+
+    const dupe = state.subusers.find(s => s.username === username && s.id !== id);
+    if(dupe) return showToast('⚠️ Ye Username already use ho raha hai, alag username chunein', true);
+
+    const su = {
+      id, name, username, password, schoolId,
+      classes: [...subAdminAssignedClasses],
+      perms: {
+        add: document.getElementById('su_perm_add').checked,
+        edit: document.getElementById('su_perm_edit').checked,
+        delete: document.getElementById('su_perm_delete').checked,
+        print: document.getElementById('su_perm_print').checked,
+      }
+    };
+
+    const idx = state.subusers.findIndex(s => s.id === id);
+    if(idx >= 0) state.subusers[idx] = su; else state.subusers.push(su);
+
+    saveLocal();
+    closeModal('subuserModalOverlay');
+    renderSubUsersList();
+    updateSidebarBadge();
+    populateRoleSimulator();
+    showToast(idx >= 0 ? '✅ Sub Admin updated' : '✅ Sub Admin added');
+  }
+
+  function deleteSubUser(id) {
+    const su = state.subusers.find(s => s.id === id);
+    if(!su) return;
+    if(!confirm(`"${su.name}" ko delete karein?`)) return;
+    state.subusers = state.subusers.filter(s => s.id !== id);
+    saveLocal();
+    renderSubUsersList();
+    populateRoleSimulator();
+    showToast('🗑️ Sub Admin deleted');
+  }
+
+  function renderSubUsersList() {
+    const tbody = document.getElementById('subusersTbody');
+    if(!tbody) return;
+    if(state.subusers.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">No sub admins added yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = state.subusers.map(su => {
+      const school = state.schools.find(s => s.id === su.schoolId);
+      const classesLabel = su.classes && su.classes.length ? su.classes.join(', ') : 'All';
+      const permsLabel = Object.entries(su.perms || {}).filter(([,v]) => v).map(([k]) => k).join(', ') || 'none';
+      return `
+        <tr>
+          <td>${su.name}<br><span style="font-size:11px;color:var(--text-muted);">${su.username}</span></td>
+          <td>${school ? school.name : '<span style="color:#ef4444;">Unassigned</span>'}</td>
+          <td>${classesLabel}</td>
+          <td><span class="badge badge-green">${permsLabel}</span></td>
+          <td>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-sm btn-outline" onclick="openSubUserModal('${su.id}')">✏️ Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteSubUser('${su.id}')">🗑️</button>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  // ============================================================
+  // FORM BUILDER
+  // ============================================================
+  function getFormConfig(schoolId) {
+    if(!state.formConfigs[schoolId]) state.formConfigs[schoolId] = { baseFields: {}, customFields: [] };
+    return state.formConfigs[schoolId];
+  }
+
+  function populateFormBuilderSchoolSelect() {
+    const sel = document.getElementById('builderSchoolSelect');
+    if(!sel) return;
+    populateSchoolSelect(sel, state.activeSchoolId);
+    if(!sel.value && state.schools.length) sel.value = state.schools[0].id;
+  }
+
+  function loadFormBuilderConfig() {
+    const schoolId = document.getElementById('builderSchoolSelect').value;
+    if(!schoolId) return;
+    const cfg = getFormConfig(schoolId);
+
+    const baseContainer = document.getElementById('builderBaseFields');
+    baseContainer.innerHTML = BASE_FIELDS.map(f => {
+      const fc = cfg.baseFields[f.id] || { label: f.label, show: true, required: true, autofill: '' };
+      return `
+        <div class="builder-row" data-base-id="${f.id}">
+          <div style="font-weight:600;font-size:13px;">${f.label}</div>
+          <input type="text" class="form-control dcontrol" value="${fc.label || f.label}" placeholder="Custom label">
+          <input type="text" class="form-control dcontrol" value="${fc.autofill || ''}" placeholder="e.g. static value">
+          <div style="text-align:center;"><input type="checkbox" ${fc.show !== false ? 'checked' : ''} class="bf-show"></div>
+          <div style="text-align:center;"><input type="checkbox" ${fc.required !== false ? 'checked' : ''} class="bf-required"></div>
+          <div></div>
+        </div>`;
+    }).join('');
+
+    renderCustomFieldsBuilder(cfg);
+    renderFormBuilderPreview(cfg);
+  }
+
+  function renderCustomFieldsBuilder(cfg) {
+    const container = document.getElementById('builderCustomFields');
+    if(cfg.customFields.length === 0) {
+      container.innerHTML = `<p style="font-size:12px;color:var(--text-muted);">No custom fields yet.</p>`;
+      return;
+    }
+    container.innerHTML = cfg.customFields.map((f, idx) => `
+      <div class="builder-row" data-custom-idx="${idx}">
+        <input type="text" class="form-control dcontrol cf-id" value="${f.id}" placeholder="field_id">
+        <input type="text" class="form-control dcontrol cf-label" value="${f.label}" placeholder="Custom Label">
+        <select class="form-control dcontrol cf-type">
+          <option value="text" ${f.type === 'text' ? 'selected' : ''}>Text</option>
+          <option value="date" ${f.type === 'date' ? 'selected' : ''}>Date</option>
+          <option value="file" ${f.type === 'file' ? 'selected' : ''}>File</option>
+        </select>
+        <div style="text-align:center;"><input type="checkbox" class="cf-show" ${f.show !== false ? 'checked' : ''}></div>
+        <div style="text-align:center;"><input type="checkbox" class="cf-required" ${f.required ? 'checked' : ''}></div>
+        <button class="btn btn-sm btn-danger" onclick="removeCustomFieldFromBuilder(${idx})">✕</button>
+      </div>
+    `).join('');
+  }
+
+  function addCustomFieldToBuilder() {
+    const schoolId = document.getElementById('builderSchoolSelect').value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    const cfg = getFormConfig(schoolId);
+    cfg.customFields.push({ id: 'custom_' + Date.now(), label: 'New Field', type: 'text', show: true, required: false });
+    renderCustomFieldsBuilder(cfg);
+  }
+
+  function removeCustomFieldFromBuilder(idx) {
+    const schoolId = document.getElementById('builderSchoolSelect').value;
+    const cfg = getFormConfig(schoolId);
+    cfg.customFields.splice(idx, 1);
+    renderCustomFieldsBuilder(cfg);
+  }
+
+  function readFormBuilderFromDOM() {
+    const baseFields = {};
+    document.querySelectorAll('#builderBaseFields .builder-row').forEach(row => {
+      const id = row.dataset.baseId;
+      const inputs = row.querySelectorAll('input[type="text"]');
+      baseFields[id] = {
+        label: inputs[0]?.value || id,
+        autofill: inputs[1]?.value || '',
+        show: row.querySelector('.bf-show')?.checked !== false,
+        required: row.querySelector('.bf-required')?.checked !== false,
+      };
+    });
+
+    const customFields = [];
+    document.querySelectorAll('#builderCustomFields .builder-row').forEach(row => {
+      customFields.push({
+        id: row.querySelector('.cf-id')?.value.trim() || ('custom_' + Date.now()),
+        label: row.querySelector('.cf-label')?.value.trim() || 'Field',
+        type: row.querySelector('.cf-type')?.value || 'text',
+        show: row.querySelector('.cf-show')?.checked !== false,
+        required: row.querySelector('.cf-required')?.checked || false,
+      });
+    });
+
+    return { baseFields, customFields };
+  }
+
+  function saveFormBuilderConfig() {
+    const schoolId = document.getElementById('builderSchoolSelect').value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    state.formConfigs[schoolId] = readFormBuilderFromDOM();
+    saveLocal();
+    renderFormBuilderPreview(state.formConfigs[schoolId]);
+    showToast('✅ Form configuration saved');
+  }
+
+  function applyFormToAllSchools() {
+    const schoolId = document.getElementById('builderSchoolSelect').value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    if(!confirm('Ye form configuration sabhi schools par apply karein?')) return;
+    const cfg = readFormBuilderFromDOM();
+    state.schools.forEach(s => { state.formConfigs[s.id] = JSON.parse(JSON.stringify(cfg)); });
+    saveLocal();
+    showToast('✅ Applied to all schools');
+  }
+
+  function renderFormBuilderPreview(cfg) {
+    const container = document.getElementById('formBuilderPreview');
+    if(!container) return;
+    const baseHtml = BASE_FIELDS.filter(f => (cfg.baseFields[f.id]?.show !== false)).map(f => {
+      const fc = cfg.baseFields[f.id] || {};
+      return `<div class="form-group"><label>${fc.label || f.label}${fc.required !== false ? ' *' : ''}</label><input class="form-control" disabled placeholder="${f.type}"></div>`;
+    }).join('');
+    const customHtml = cfg.customFields.filter(f => f.show !== false).map(f =>
+      `<div class="form-group"><label>${f.label}${f.required ? ' *' : ''}</label><input class="form-control" disabled placeholder="${f.type}"></div>`
+    ).join('');
+    container.innerHTML = baseHtml + customHtml;
+  }
+
+  // ============================================================
+  // STUDENTS CRUD
+  // ============================================================
+  function renderAddStudentForm() {
+    const container = document.getElementById('dynamicStudentForm');
+    if(!container) return;
+    const schoolId = state.activeSchoolId;
+    if(!schoolId) {
+      container.innerHTML = `<p style="color:var(--text-muted);">Pehle ek school add/select karein.</p>`;
+      return;
+    }
+    const cfg = getFormConfig(schoolId);
+    editingStudentId = null;
+
+    const baseHtml = BASE_FIELDS.filter(f => cfg.baseFields[f.id]?.show !== false).map(f => {
+      const fc = cfg.baseFields[f.id] || {};
+      if(f.type === 'file') {
+        return `
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>${fc.label || f.label}${fc.required !== false ? ' *' : ''}</label>
+            <div class="upload-box">
+              <input type="file" accept="image/*" onchange="handleAssetUpload(event, 'student_photo')">
+              <img id="student_photo_preview" style="display:none;">
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="form-group">
+          <label>${fc.label || f.label}${fc.required !== false ? ' *' : ''}</label>
+          <input type="${f.type === 'date' ? 'date' : 'text'}" class="form-control sf-base" data-id="${f.id}" value="${fc.autofill || ''}">
+        </div>`;
+    }).join('');
+
+    const customHtml = cfg.customFields.filter(f => f.show !== false).map(f => `
+      <div class="form-group">
+        <label>${f.label}${f.required ? ' *' : ''}</label>
+        <input type="${f.type === 'date' ? 'date' : 'text'}" class="form-control sf-custom" data-id="${f.id}">
+      </div>`).join('');
+
+    container.innerHTML = baseHtml + customHtml;
+    tempAssets.student_photo = '';
+  }
+
+  function editStudent(id) {
+    if(!hasPerm('edit')) return showToast('⛔ Aapko Edit karne ki permission nahi hai', true);
+    const student = state.students.find(s => s.id === id);
+    if(!student) return;
+    showPage('add-student');
+    renderAddStudentForm();
+    editingStudentId = id;
+
+    setTimeout(async () => {
+      document.querySelectorAll('.sf-base, .sf-custom').forEach(input => {
+        const fid = input.dataset.id;
+        if(student[fid] !== undefined) input.value = student[fid];
+      });
+      if(student.photo) {
+        const dataUrl = await resolvePhoto(student.photo);
+        tempAssets.student_photo = student.photo;
+        const preview = document.getElementById('student_photo_preview');
+        if(preview && dataUrl) { preview.src = dataUrl; preview.style.display = 'block'; }
+      }
+    }, 0);
+  }
+
+  async function saveStudentData() {
+    const schoolId = state.activeSchoolId;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+
+    const isNew = !editingStudentId;
+    if(isNew && !hasPerm('add')) return showToast('⛔ Aapko Add karne ki permission nahi hai', true);
+    if(!isNew && !hasPerm('edit')) return showToast('⛔ Aapko Edit karne ki permission nahi hai', true);
+
+    const id = editingStudentId || ('student_' + Date.now());
+    const student = { id, schoolId };
+
+    document.querySelectorAll('.sf-base, .sf-custom').forEach(input => {
+      student[input.dataset.id] = input.value.trim();
+    });
+
+    if(!student.name) return showToast('⚠️ Student Name zaroori hai', true);
+
+    // Sub Admins restricted to specific classes can't create/move students outside their assigned classes.
+    const su = getCurrentSubUser();
+    if(su && su.classes && su.classes.length > 0 && student.class && !su.classes.includes(student.class)) {
+      return showToast(`⛔ Aap sirf class ${su.classes.join(', ')} ke students manage kar sakte hain`, true);
+    }
+
+    const photoKey = tempAssets.student_photo ? (tempAssets.student_photo.startsWith('data:') ? 'photo_' + id : tempAssets.student_photo) : '';
+    let photoSaved = true;
+    if(tempAssets.student_photo && tempAssets.student_photo.startsWith('data:')) {
+      try { await dbSet(photoKey, tempAssets.student_photo); } catch(e) { photoSaved = false; }
+    }
+    student.photo = photoSaved ? (photoKey || (isNew ? '' : (state.students.find(s => s.id === id)?.photo || ''))) : (state.students.find(s => s.id === id)?.photo || '');
+    if(!photoSaved) showToast('⚠️ Photo save nahi hui (storage full). Baaki details save ho rahi hain.', true);
+
+    const idx = state.students.findIndex(s => s.id === id);
+    if(idx >= 0) state.students[idx] = student; else state.students.push(student);
+
+    editingStudentId = null;
+    saveLocal();
+    updateSidebarBadge();
+    showToast(idx >= 0 ? '✅ Student updated' : '✅ Student registered');
+    showPage('students');
+  }
+
+  function deleteStudent(id) {
+    if(!hasPerm('delete')) return showToast('⛔ Aapko Delete karne ki permission nahi hai', true);
+    const student = state.students.find(s => s.id === id);
+    if(!student) return;
+    if(!confirm(`"${student.name}" ko delete karein?`)) return;
+    state.students = state.students.filter(s => s.id !== id);
+    saveLocal();
+    renderStudentsList();
+    updateSidebarBadge();
+    showToast('🗑️ Student deleted');
+  }
+
+  async function renderStudentsList(filter) {
+    const tbody = document.getElementById('studentsTbody');
+    if(!tbody) return;
+    const f = (filter || '').toLowerCase();
+    const su = getCurrentSubUser();
+    const classRestriction = su && su.classes && su.classes.length > 0 ? su.classes : null;
+
+    const list = state.students.filter(s => s.schoolId === state.activeSchoolId &&
+      (!classRestriction || classRestriction.includes(s.class)) &&
+      (!f || (s.name || '').toLowerCase().includes(f) || (s.roll || '').toLowerCase().includes(f)));
+
+    if(list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">No students registered yet for this school.</td></tr>`;
+      return;
+    }
+
+    const canEdit = hasPerm('edit');
+    const canDelete = hasPerm('delete');
+
+    const rows = await Promise.all(list.map(async (s) => {
+      const photo = await resolvePhoto(s.photo);
+      return `
+        <tr>
+          <td>${photo ? `<img src="${photo}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;">` : '👤'}</td>
+          <td>${s.name || '-'}</td>
+          <td>${s.class || '-'} / ${s.section || '-'}</td>
+          <td>${s.roll || '-'}</td>
+          <td>${s.mobile || '-'}</td>
+          <td>
+            <div style="display:flex;gap:6px;">
+              ${canEdit ? `<button class="btn btn-sm btn-outline perm-edit-btn" onclick="editStudent('${s.id}')">✏️ Edit</button>` : ''}
+              ${canDelete ? `<button class="btn btn-sm btn-danger perm-delete-btn" onclick="deleteStudent('${s.id}')">🗑️</button>` : ''}
+              ${!canEdit && !canDelete ? '<span style="font-size:11px;color:#9ca3af;">View only</span>' : ''}
+            </div>
+          </td>
+        </tr>`;
+    }));
+    tbody.innerHTML = rows.join('');
+  }
+
+  // ============================================================
+  // PRINT PREVIEW (single + batch)
+  // ============================================================
+  let selectedPrintStudentId = null;
+
+  // Populates the school dropdown (Admins see all schools; Sub Admins are locked to their
+  // assigned school) and the class filter, then renders the student list for the page.
+  function initPrintPage() {
+    selectedPrintStudentId = null;
+    const schoolSel = document.getElementById('print_school_filter');
+    const isAdmin = state.activeRole === 'admin';
+
+    if(isAdmin) {
+      schoolSel.innerHTML = state.schools.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      schoolSel.disabled = false;
+      if(state.activeSchoolId && state.schools.some(s => s.id === state.activeSchoolId)) schoolSel.value = state.activeSchoolId;
+      else if(state.schools.length) schoolSel.value = state.schools[0].id;
+    } else {
+      const su = getCurrentSubUser();
+      const school = state.schools.find(s => s.id === su?.schoolId);
+      schoolSel.innerHTML = school ? `<option value="${school.id}">${school.name}</option>` : `<option value="">No school assigned</option>`;
+      schoolSel.disabled = true;
+      schoolSel.value = school?.id || '';
+    }
+
+    printSchoolFilterChanged();
+  }
+
+  // Re-populates the class filter + student list whenever the selected school changes.
+  function printSchoolFilterChanged() {
+    const schoolId = document.getElementById('print_school_filter')?.value || '';
+    state.activeSchoolId = schoolId || state.activeSchoolId;
+
+    const su = getCurrentSubUser();
+    const classRestriction = su && su.classes && su.classes.length > 0 ? su.classes : null;
+    let classes = [...new Set(state.students.filter(s => s.schoolId === schoolId).map(s => s.class).filter(Boolean))].sort();
+    if(classRestriction) classes = classes.filter(c => classRestriction.includes(c));
+
+    const classFilterEl = document.getElementById('print_class_filter');
+    if(classFilterEl) classFilterEl.innerHTML = `<option value="">All Classes</option>` + classes.map(c => `<option value="${c}">Class ${c}</option>`).join('');
+
+    selectedPrintStudentId = null;
+    renderPrintList();
+    renderCardPreviewArea(null);
+  }
+
+  function renderPrintList(filter) {
+    const container = document.getElementById('printStudentList');
+    if(!container) return;
+    const schoolId = document.getElementById('print_school_filter')?.value || state.activeSchoolId;
+    const f = (filter || '').toLowerCase();
+
+    const su = getCurrentSubUser();
+    const classRestriction = su && su.classes && su.classes.length > 0 ? su.classes : null;
+
+    const list = state.students.filter(s => s.schoolId === schoolId &&
+      (!classRestriction || classRestriction.includes(s.class)) &&
+      (!f || (s.name || '').toLowerCase().includes(f)));
+
+    if(list.length === 0) {
+      container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">No students found.</p>`;
+      return;
+    }
+    container.innerHTML = list.map(s => `
+      <div onclick="selectPrintStudent('${s.id}')" style="padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid var(--border);margin-bottom:6px;${s.id === selectedPrintStudentId ? 'background:#eef2ff;border-color:var(--primary);' : ''}">
+        <strong style="font-size:13px;">${s.name}</strong>
+        <div style="font-size:11px;color:var(--text-muted);">Class ${s.class || '-'} | Roll ${s.roll || '-'}</div>
+      </div>
+    `).join('');
+  }
+
+  async function selectPrintStudent(id) {
+    selectedPrintStudentId = id;
+    renderPrintList();
+    await renderCardPreviewArea(id);
+  }
+
+  async function renderCardPreviewArea(studentId) {
+    const area = document.getElementById('cardRenderArea');
+    if(!area) return;
+    const schoolId = document.getElementById('print_school_filter')?.value || state.activeSchoolId;
+    const studentRaw = state.students.find(s => s.id === studentId);
+    const schoolRaw = state.schools.find(s => s.id === schoolId);
+    if(!studentRaw || !schoolRaw) { area.innerHTML = `<p style="color:var(--text-muted);">Select a student to preview.</p>`; return; }
+
+    const settings = (state.designTemplates && state.designTemplates[schoolRaw.id]) ? state.designTemplates[schoolRaw.id] : getDefaultDesignerSettings();
+    const school = { ...schoolRaw, logo: await resolvePhoto(schoolRaw.logo), bg: await resolvePhoto(schoolRaw.bg), sign: await resolvePhoto(schoolRaw.sign) };
+    const student = { ...studentRaw, photo: await resolvePhoto(studentRaw.photo) };
+
+    area.innerHTML = `<div style="display:inline-block;">${renderDesignedCard(student, school, settings)}</div>`;
+  }
+
+  function getDefaultDesignerSettings() {
+    return {
+      size: 'landscape', photoPos: 'left', photoShape: 'square', photoOffsetX: 0, photoOffsetY: 0, photoSize: 70,
+      logoOffsetX: 0, logoOffsetY: 0, logoSize: 32, schoolOffsetX: 0, schoolOffsetY: 0, logoShape: 'square',
+      headerStyle: 'banner', colorPrimary: '#4f46e5', colorSecondary: '#818cf8', colorText: '#1f2937', colorBg: '#ffffff',
+      showPrimary: true, showSecondary: true, showBg: true, bgStyle: 'solid', bgOpacity: 15,
+      fontSchool: 'Arial, sans-serif', fontData: 'Arial, sans-serif', schoolFontSize: 14, dataFontSize: 10,
+      textAlign: 'left', labelStyle: 'bold_colon', showDashedLine: true, radius: 12, showQR: false, qrData: 'roll', showBarcode: false,
+      showSign: true, showBorder: true, watermark: '', footerText: '', emergencyLabel: '',
+      headerHeight: 0, idTag: 'none', accentStrip: 'none', bgPattern: 'none', cardShadow: true, textShadow: false,
+      fieldGap: 3, nameHighlight: 'none', labelWeight: 'bold', sectionDivider: 'none',
+      photoBorderColor: '#4f46e5', photoBorderWidth: 2, photoBorderStyle: 'solid', backText: '', customCss: '',
+      visibleFields: ['name','father','class','section','roll','dob','mobile','blood','address'],
+      fieldOrder: ['name','father','class','section','roll','dob','mobile','blood','address'],
+    };
+  }
+
+  async function printSingleCard(forceLiveDesignerSettings) {
+    if(!hasPerm('print')) return showToast('⛔ Aapko Print karne ki permission nahi hai', true);
+
+    // Only use the live (possibly unsaved) Designer form values when this was explicitly
+    // triggered from inside the Designer page. Everywhere else (Print Cards page) must use
+    // the actually-saved permanent template for the school, not whatever the form happens to show.
+    const calledFromDesigner = !!forceLiveDesignerSettings;
+    const schoolId = calledFromDesigner
+      ? (document.getElementById('designer_school')?.value || state.activeSchoolId)
+      : (document.getElementById('print_school_filter')?.value || state.activeSchoolId);
+    const schoolRaw = state.schools.find(s => s.id === schoolId);
+    if(!schoolRaw) return showToast('⚠️ School select karein', true);
+
+    const studentId = calledFromDesigner
+      ? document.getElementById('designer_preview_student')?.value
+      : selectedPrintStudentId;
+
+    const settings = calledFromDesigner
+      ? getDesignerSettings()
+      : ((state.designTemplates && state.designTemplates[schoolId]) || getDefaultDesignerSettings());
+
+    const studentRaw = studentId ? state.students.find(s => s.id === studentId) : null;
+    const school = { ...schoolRaw, logo: await resolvePhoto(schoolRaw.logo), bg: await resolvePhoto(schoolRaw.bg), sign: await resolvePhoto(schoolRaw.sign) };
+    const student = studentRaw ? { ...studentRaw, photo: await resolvePhoto(studentRaw.photo) } : null;
+
+    const area = document.getElementById('printCardArea');
+    area.innerHTML = renderDesignedCard(student, school, settings);
+    document.body.classList.remove('batch-printing');
+    setTimeout(() => window.print(), 100);
+  }
+
+  // Batch print always uses the school's permanently saved design template (never live/unsaved
+  // Designer form values) since this is now exclusively triggered from the Print Cards page.
+  async function batchPrintCards() {
+    if(!hasPerm('print')) return showToast('⛔ Aapko Print karne ki permission nahi hai', true);
+
+    const schoolId = document.getElementById('print_school_filter')?.value || state.activeSchoolId;
+    const schoolRaw = state.schools.find(s => s.id === schoolId);
+    if(!schoolRaw) return showToast('⚠️ School select karein', true);
+
+    const settings = (state.designTemplates && state.designTemplates[schoolId]) || getDefaultDesignerSettings();
+
+    const classFilter = document.getElementById('print_class_filter')?.value || '';
+    const perPage = parseInt(document.getElementById('print_cards_per_page')?.value || 6);
+
+    const su = getCurrentSubUser();
+    const classRestriction = su && su.classes && su.classes.length > 0 ? su.classes : null;
+
+    let students = state.students.filter(s => s.schoolId === schoolId);
+    if(classRestriction) students = students.filter(s => classRestriction.includes(s.class));
+    if(classFilter) students = students.filter(s => s.class === classFilter);
+    if(students.length === 0) return showToast('⚠️ Is filter ke liye koi student nahi mila', true);
+
+    const school = { ...schoolRaw, logo: await resolvePhoto(schoolRaw.logo), bg: await resolvePhoto(schoolRaw.bg), sign: await resolvePhoto(schoolRaw.sign) };
+    const resolvedStudents = await Promise.all(students.map(async s => ({ ...s, photo: await resolvePhoto(s.photo) })));
+
+    const cols = perPage <= 2 ? 1 : perPage <= 4 ? 2 : perPage <= 9 ? 3 : 4;
+    const pages = [];
+    for(let i = 0; i < resolvedStudents.length; i += perPage) pages.push(resolvedStudents.slice(i, i + perPage));
+
+    const container = document.getElementById('batchPrintContainer');
+    container.innerHTML = pages.map(pageStudents => `
+      <div class="print-page" style="display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:16px;justify-content:center;padding:10mm;">
+        ${pageStudents.map(s => `<div class="print-card-cell" style="display:flex;justify-content:center;">${renderDesignedCard(s, school, settings)}</div>`).join('')}
+      </div>
+    `).join('');
+
+    document.body.classList.add('batch-printing');
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => document.body.classList.remove('batch-printing'), 500);
+    }, 150);
+  }
+
+  // ============================================================
+  // STORAGE INFO
+  // ============================================================
+  async function showStorageInfo() {
+    let usedKB = 0;
+    try {
+      const raw = localStorage.getItem('schoolIdAppV3') || '';
+      usedKB = Math.round((raw.length * 2) / 1024);
+    } catch(e) { /* ignore */ }
+
+    let photoCount = 0;
+    try {
+      const all = await dbGetAll();
+      photoCount = Object.keys(all).length;
+    } catch(e) { /* ignore */ }
+
+    showToast(`💾 Schools: ${state.schools.length} | Students: ${state.students.length} | Sub Admins: ${state.subusers.length} | Photos in DB: ${photoCount} | LocalStorage: ~${usedKB} KB`);
+  }
+
+  // ============================================================
+  // BACKUP EXPORT / IMPORT (safety net against unreliable file:// storage)
+  // ============================================================
+  // Bundles everything — schools, students, sub admins, form configs, design templates,
+  // AND every photo/logo/signature/background from IndexedDB — into one downloadable JSON
+  // file. This is the only way to guarantee data survives if the browser's local storage
+  // gets cleared or behaves inconsistently (common with file:// pages in some browsers).
+  async function exportBackup() {
+    try {
+      let photos = {};
+      try { photos = await dbGetAll(); } catch(e) { /* IndexedDB unavailable, proceed without photos */ }
+
+      const backup = {
+        type: 'school-id-app-backup',
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        state,
+        photos,
+      };
+
+      const json = JSON.stringify(backup);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `school-id-backup-${dateStamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast('✅ Backup file download ho gayi. Ise safe jagah save karein.');
+    } catch(err) {
+      showToast('⚠️ Backup export fail hua: ' + (err.message || 'unknown error'), true);
+    }
+  }
+
+  function importBackup(event) {
+    const file = event.target.files[0];
+    if(!file) return;
+
+    if(!confirm('Backup import karne se current data REPLACE ho jayega. Continue karein?')) {
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const backup = JSON.parse(e.target.result);
+        if(!backup || backup.type !== 'school-id-app-backup' || !backup.state) {
+          showToast('⚠️ Ye valid backup file nahi hai', true);
+          return;
+        }
+
+        state = backup.state;
+        if(!state.formConfigs) state.formConfigs = {};
+        if(!state.formConfigs['default']) state.formConfigs['default'] = { baseFields: {}, customFields: [] };
+        if(!state.designTemplates) state.designTemplates = {};
+
+        if(backup.photos) {
+          for(const [key, value] of Object.entries(backup.photos)) {
+            try { await dbSet(key, value); } catch(e2) { /* skip individual failures */ }
+          }
+        }
+
+        saveLocal();
+        updateSidebarBadge();
+        showToast('✅ Backup restore ho gaya!');
+        showPage('dashboard');
+      } catch(err) {
+        showToast('⚠️ Backup file padhne mein error: ' + (err.message || 'invalid file'), true);
+      } finally {
+        event.target.value = '';
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ============================================================
+  // DESIGNER COLOR / THEME HELPERS
+  // ============================================================
+  function toggleColorVisibility(which) {
+    const map = { primary: 'd_show_primary', secondary: 'd_show_secondary', bg: 'd_show_bg' };
+    const colorMap = { primary: 'd_color_primary', secondary: 'd_color_secondary', bg: 'd_color_bg' };
+    const checkbox = document.getElementById(map[which]);
+    const colorInput = document.getElementById(colorMap[which]);
+    if(colorInput) colorInput.style.opacity = (checkbox && checkbox.checked === false) ? '0.35' : '1';
+    updateDesignerPreview();
+  }
+
+  const DESIGN_THEMES = {
+    royal:   { primary: '#1e3a8a', secondary: '#3b82f6' },
+    emerald: { primary: '#065f46', secondary: '#10b981' },
+    sunset:  { primary: '#7c3aed', secondary: '#ec4899' },
+    maroon:  { primary: '#7f1d1d', secondary: '#dc2626' },
+    gold:    { primary: '#92400e', secondary: '#f59e0b' },
+    slate:   { primary: '#1e293b', secondary: '#64748b' },
+    teal:    { primary: '#134e4a', secondary: '#14b8a6' },
+    rose:    { primary: '#881337', secondary: '#f43f5e' },
+  };
+
+  function applyTheme(name) {
+    const theme = DESIGN_THEMES[name];
+    if(!theme) return;
+    const p = document.getElementById('d_color_primary');
+    const s = document.getElementById('d_color_secondary');
+    if(p) p.value = theme.primary;
+    if(s) s.value = theme.secondary;
+    updateDesignerPreview();
+  }
+
+  // ============================================================
+  // DESIGNER SCHOOL CHANGE
+  // ============================================================
+  function designerSchoolChanged() {
+    const schoolId = document.getElementById('designer_school').value;
+    if(state.designTemplates && state.designTemplates[schoolId]) {
+      loadDesignTemplate(state.designTemplates[schoolId]);
+    }
+    const stuSel = document.getElementById('designer_preview_student');
+    const students = state.students.filter(s => s.schoolId === schoolId);
+    stuSel.innerHTML = `<option value="">-- Sample Preview --</option>` + 
+      students.map(s => `<option value="${s.id}">${s.name} (Cls ${s.class || '-'})</option>`).join('');
+
+    renderDesignerFieldToggles();
+    updateDesignerPreview();
+  }
+
+
+  // ============================================================
+  // UPDATED ID CARD DESIGNER FUNCTIONS
+  // ============================================================
+
+  let designerFlipped = false;
+  let designerFieldOrder = ['name','father','class','section','roll','dob','mobile','blood','address'];
+  const DESIGNER_FIELD_LABELS = {name:'Student Name',father:'Father Name',class:'Class',section:'Section',roll:'Roll No',dob:'Date of Birth',mobile:'Mobile',blood:'Blood Group',address:'Address'};
+
+  function initCardDesigner() {
+    const sel = document.getElementById('designer_school');
+    sel.innerHTML = state.schools.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    if(state.activeSchoolId) sel.value = state.activeSchoolId;
+    renderDesignerFieldToggles();
+    designerSchoolChanged();
+    updateDesignerPreview();
+  }
+
+  function renderDesignerFieldToggles() {
+    const container = document.getElementById('d_field_toggles');
+    if(!container) return;
+    container.innerHTML = '';
+    designerFieldOrder.forEach((fid, idx) => {
+      const label = DESIGNER_FIELD_LABELS[fid] || fid;
+      const row = document.createElement('div');
+      row.dataset.fieldId = fid;
+      row.className = 'dfield-row';
+      row.innerHTML = `
+        <span class="dfield-name" title="${label}">${label}</span>
+        <button onclick="moveField('${fid}',-1)" title="Move Up" ${idx===0?'disabled':''}>▲</button>
+        <button onclick="moveField('${fid}',1)" title="Move Down" ${idx===designerFieldOrder.length-1?'disabled':''}>▼</button>
+        <label class="toggle" style="margin:0;width:32px;height:18px;flex-shrink:0;">
+          <input type="checkbox" class="d-field-check" data-id="${fid}" checked onchange="updateDesignerPreview()" style="opacity:0;width:0;height:0;">
+          <span class="toggle-slider" style="border-radius:34px;"></span>
+        </label>
+      `;
+      container.appendChild(row);
+    });
+  }
+
+  function moveField(fieldId, direction) {
+    const idx = designerFieldOrder.indexOf(fieldId);
+    if(idx < 0) return;
+    const newIdx = idx + direction;
+    if(newIdx < 0 || newIdx >= designerFieldOrder.length) return;
+    [designerFieldOrder[idx], designerFieldOrder[newIdx]] = [designerFieldOrder[newIdx], designerFieldOrder[idx]];
+    renderDesignerFieldToggles();
+    updateDesignerPreview();
+  }
+
+  // --- UPDATED getDesignerSettings ---
+  function getDesignerSettings() {
+    const photoShapeEl = document.querySelector('input[name="d_photo_shape"]:checked');
+    const showPrimary = document.getElementById('d_show_primary')?.checked !== false;
+    const showSecondary = document.getElementById('d_show_secondary')?.checked !== false;
+    const showBg = document.getElementById('d_show_bg')?.checked !== false;
+    
+    return {
+      size: document.getElementById('d_size')?.value || 'landscape',
+      photoPos: document.getElementById('d_photo_pos')?.value || 'left',
+      photoShape: photoShapeEl ? photoShapeEl.value : 'square',
+      photoOffsetX: parseInt(document.getElementById('d_photo_offset_x')?.value || 0),
+      photoOffsetY: parseInt(document.getElementById('d_photo_offset_y')?.value || 0),
+      photoSize: parseInt(document.getElementById('d_photo_size')?.value || 70),
+      logoOffsetX: parseInt(document.getElementById('d_logo_offset_x')?.value || 0),
+      logoOffsetY: parseInt(document.getElementById('d_logo_offset_y')?.value || 0),
+      logoSize: parseInt(document.getElementById('d_logo_size')?.value || 32),
+      schoolOffsetX: parseInt(document.getElementById('d_school_offset_x')?.value || 0),
+      schoolOffsetY: parseInt(document.getElementById('d_school_offset_y')?.value || 0),
+      logoShape: (document.querySelector('input[name="d_logo_shape"]:checked')?.value || 'square'),
+      headerStyle: document.getElementById('d_header_style')?.value || 'banner',
+      colorPrimary: showPrimary ? (document.getElementById('d_color_primary')?.value || '#4f46e5') : 'transparent',
+      colorSecondary: showSecondary ? (document.getElementById('d_color_secondary')?.value || '#818cf8') : 'transparent',
+      colorText: document.getElementById('d_color_text')?.value || '#1f2937',
+      colorBg: showBg ? (document.getElementById('d_color_bg')?.value || '#ffffff') : 'transparent',
+      colorPrimaryRaw: document.getElementById('d_color_primary')?.value || '#4f46e5',
+      colorSecondaryRaw: document.getElementById('d_color_secondary')?.value || '#818cf8',
+      colorBgRaw: document.getElementById('d_color_bg')?.value || '#ffffff',
+      showPrimary, showSecondary, showBg,
+      bgStyle: document.getElementById('d_bg_style')?.value || 'solid',
+      bgOpacity: document.getElementById('d_bg_opacity')?.value || 15,
+      fontSchool: document.getElementById('d_font_school')?.value || 'Arial, sans-serif',
+      fontData: document.getElementById('d_font_data')?.value || 'Arial, sans-serif',
+      schoolFontSize: document.getElementById('d_school_font_size')?.value || 14,
+      dataFontSize: document.getElementById('d_data_font_size')?.value || 10,
+      textAlign: document.getElementById('d_text_align')?.value || 'left',
+      labelStyle: document.getElementById('d_label_style')?.value || 'bold_colon',
+      showDashedLine: document.getElementById('d_show_dashed_line')?.checked !== false,
+      radius: document.getElementById('d_radius')?.value || 12,
+      showQR: document.getElementById('d_show_qr')?.checked || false,
+      qrData: document.getElementById('d_qr_data')?.value || 'roll',
+      showBarcode: document.getElementById('d_show_barcode')?.checked || false,
+      showSign: document.getElementById('d_show_sign')?.checked !== false,
+      showBorder: document.getElementById('d_show_border')?.checked !== false,
+      watermark: document.getElementById('d_watermark')?.value || '',
+      footerText: document.getElementById('d_footer_text')?.value || '',
+      emergencyLabel: document.getElementById('d_emergency_label')?.value || '',
+      
+      // NEW ADVANCED PROPERTIES
+      headerHeight: parseInt(document.getElementById('d_header_height')?.value || 0),
+      idTag: document.getElementById('d_id_tag')?.value || 'none',
+      accentStrip: document.getElementById('d_accent_strip')?.value || 'none',
+      bgPattern: document.getElementById('d_bg_pattern')?.value || 'none',
+      cardShadow: document.getElementById('d_card_shadow')?.checked !== false,
+      textShadow: document.getElementById('d_text_shadow')?.checked || false,
+      fieldGap: parseInt(document.getElementById('d_field_gap')?.value || 3),
+      nameHighlight: document.getElementById('d_name_highlight')?.value || 'none',
+      labelWeight: document.getElementById('d_label_weight')?.value || 'bold',
+      sectionDivider: document.getElementById('d_section_divider')?.value || 'none',
+      photoBorderColor: document.getElementById('d_photo_border_color')?.value || '#4f46e5',
+      photoBorderWidth: parseInt(document.getElementById('d_photo_border_width')?.value || 2),
+      photoBorderStyle: document.getElementById('d_photo_border_style')?.value || 'solid',
+      backText: document.getElementById('d_back_text')?.value || '',
+      customCss: document.getElementById('d_custom_css')?.value || '',
+
+      visibleFields: [...document.querySelectorAll('.d-field-check:checked')].map(c => c.dataset.id),
+      fieldOrder: [...designerFieldOrder],
+    };
+  }
+
+  function getBgCss(settings) {
+    const p = settings.colorPrimary, s = settings.colorSecondary, bg = settings.colorBg;
+    switch(settings.bgStyle) {
+      case 'gradient_lr': return `linear-gradient(90deg, ${p}15, ${s}20)`;
+      case 'gradient_tb': return `linear-gradient(180deg, ${p}15, ${s}20)`;
+      case 'gradient_diag': return `linear-gradient(135deg, ${p}20, ${s}15)`;
+      default: return bg;
+    }
+  }
+
+  // --- UPDATED renderDesignedCard ---
+  function renderDesignedCard(student, school, settings) {
+    const isPortrait = settings.size === 'portrait';
+    const isSquare = settings.size === 'square';
+    
+    const W = isPortrait ? 200 : isSquare ? 240 : 320;
+    const H = isPortrait ? 320 : isSquare ? 240 : 200;
+    const PHOTO_SIZE = settings.photoSize || 70;
+    const PHOTO_W = PHOTO_SIZE;
+    const PHOTO_H = settings.photoShape === 'circle' ? PHOTO_W : Math.round(PHOTO_W * 1.2);
+    const LOGO_SIZE = settings.logoSize || 32;
+    const logoShape = settings.logoShape || 'square';
+    const logoRadius = logoShape === 'circle' ? '50%' : '4px';
+    
+    const bgColor = getBgCss(settings);
+    const primaryColor = settings.colorPrimary;
+    const secondaryColor = settings.colorSecondary;
+    const textColor = settings.colorText === '#ffffff' ? '#1f2937' : settings.colorText;
+    const radius = settings.radius + 'px';
+    const logoImg = school?.logo || '';
+    const bgImg = school?.bg || '';
+    const signImg = school?.sign || '';
+    const stuImg = student?.photo || '';
+
+    // Advanced Design Logic
+    let patternCss = '';
+    if (settings.bgPattern === 'dots') patternCss = `background-image: radial-gradient(${settings.colorPrimary}20 2px, transparent 2px); background-size: 10px 10px;`;
+    else if (settings.bgPattern === 'lines') patternCss = `background-image: repeating-linear-gradient(45deg, ${settings.colorPrimary}10 0, ${settings.colorPrimary}10 1px, transparent 0, transparent 50%); background-size: 10px 10px;`;
+    else if (settings.bgPattern === 'grid') patternCss = `background-image: linear-gradient(${settings.colorPrimary}20 1px, transparent 1px), linear-gradient(90deg, ${settings.colorPrimary}20 1px, transparent 1px); background-size: 15px 15px;`;
+
+    const tShadow = settings.textShadow ? `text-shadow: 1px 1px 2px rgba(0,0,0,0.3);` : '';
+    const cardShadow = settings.cardShadow ? `box-shadow: 0 4px 12px rgba(0,0,0,0.15);` : '';
+    const fGap = settings.fieldGap + 'px';
+    const lWeight = settings.labelWeight;
+
+    let accentHtml = '';
+    if(settings.accentStrip !== 'none') {
+      const edge = settings.accentStrip;
+      const stripStyle = edge==='left' ? 'left:0;top:0;bottom:0;width:6px;' : edge==='right' ? 'right:0;top:0;bottom:0;width:6px;' : edge==='top' ? 'top:0;left:0;right:0;height:6px;' : 'bottom:0;left:0;right:0;height:6px;';
+      accentHtml = `<div style="position:absolute; background:${settings.colorSecondary}; z-index:10; ${stripStyle}"></div>`;
+    }
+
+    let idTagHtml = '';
+    if(settings.idTag !== 'none') {
+      const tagPos = settings.idTag === 'top' ? 'top:0;' : 'bottom:0;';
+      idTagHtml = `<div style="position:absolute; ${tagPos} left:50%; transform:translateX(-50%); background:${settings.colorPrimary}; color:white; font-size:8px; font-weight:bold; padding:2px 8px; border-radius:${settings.idTag==='top'?'0 0 4px 4px':'4px 4px 0 0'}; z-index:11; letter-spacing:1px;">IDENTITY CARD</div>`;
+    }
+
+    const photoShape = settings.photoShape || 'square';
+    const photoRadius = photoShape === 'circle' ? '50%' : photoShape === 'rounded' ? '12px' : '4px';
+    const photoDim = photoShape === 'circle' ? PHOTO_W : PHOTO_W;
+    const photoHeight = photoShape === 'circle' ? photoDim : PHOTO_H;
+    const offX = settings.photoOffsetX || 0;
+    const offY = settings.photoOffsetY || 0;
+    const photoOffsetAttr = (offX !== 0 || offY !== 0) ? `position:relative;left:${offX}px;top:${offY}px;` : '';
+
+    const logoOffX = settings.logoOffsetX || 0;
+    const logoOffY = settings.logoOffsetY || 0;
+    const logoOffsetStyle = `position:relative;left:${logoOffX}px;top:${logoOffY}px;`;
+
+    const schOffX = settings.schoolOffsetX || 0;
+    const schOffY = settings.schoolOffsetY || 0;
+    const schoolOffsetStyle = (schOffX !== 0 || schOffY !== 0) ? `position:relative;left:${schOffX}px;top:${schOffY}px;` : '';
+
+    // Header logic
+    let headerHtml = '';
+    const headerHeightStyle = settings.headerHeight > 0 ? `min-height:${settings.headerHeight}px;` : '';
+    const schoolTextWrap = `overflow-wrap:break-word;word-break:break-word;`;
+    
+    if(settings.headerStyle === 'banner' || settings.headerStyle === 'gradient') {
+      const headerBg = settings.headerStyle === 'gradient' ? `linear-gradient(90deg, ${primaryColor}, ${secondaryColor})` : primaryColor;
+      headerHtml = `
+        <div style="background:${headerBg}; padding: ${isPortrait?'10px 10px 8px':'8px 10px'}; position:relative; display:flex; align-items:center; flex-shrink:0; ${headerHeightStyle}">
+          ${logoImg ? `<img src="${logoImg}" style="width:${LOGO_SIZE}px;height:${LOGO_SIZE}px;object-fit:contain;background:white;border-radius:${logoRadius};padding:2px;position:absolute;left:${8+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;">` : `<div style="width:${LOGO_SIZE}px;height:${LOGO_SIZE}px;background:rgba(255,255,255,0.3);border-radius:${logoRadius};display:flex;align-items:center;justify-content:center;font-size:16px;position:absolute;left:${8+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;">🏫</div>`}
+          <div style="flex:1;text-align:center;min-width:0;${schoolOffsetStyle}">
+            <div style="font-size:${settings.schoolFontSize}px;font-weight:bold;color:white;font-family:${settings.fontSchool};line-height:1.15;${schoolTextWrap}">${school?.name || 'School Name'}</div>
+            ${school?.board ? `<div style="font-size:8px;color:rgba(255,255,255,0.85);margin-top:1px;">${school.board}${school?.city ? ' | '+school.city : ''}</div>` : ''}
+          </div>
+        </div>`;
+    } else if(settings.headerStyle === 'minimal') {
+      headerHtml = `
+        <div style="padding:8px 10px ${8}px ${Math.max(10, LOGO_SIZE+18)}px; position:relative; display:flex; align-items:center; border-bottom:2px solid ${primaryColor};flex-shrink:0; ${headerHeightStyle}">
+          ${logoImg ? `<img src="${logoImg}" style="width:${LOGO_SIZE}px;height:${LOGO_SIZE}px;object-fit:contain;border-radius:${logoRadius};position:absolute;left:${10+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;">` : `<span style="position:absolute;left:${10+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;">🏫</span>`}
+          <div style="${schoolOffsetStyle}flex:1;min-width:0;">
+            <div style="font-size:${settings.schoolFontSize}px;font-weight:bold;color:${primaryColor};font-family:${settings.fontSchool};line-height:1.15;${schoolTextWrap}">${school?.name || 'School Name'}</div>
+            ${school?.board ? `<div style="font-size:8px;color:#6b7280;">${school.board}</div>` : ''}
+          </div>
+        </div>`;
+    } else if(settings.headerStyle === 'centered') {
+      headerHtml = `
+        <div style="padding:8px; text-align:center; background:${primaryColor}10; border-bottom:2px solid ${primaryColor};flex-shrink:0; ${headerHeightStyle}">
+          ${logoImg ? `<img src="${logoImg}" style="width:${LOGO_SIZE}px;height:${LOGO_SIZE}px;object-fit:contain;margin:0 auto 4px;display:block;border-radius:${logoRadius};${logoOffsetStyle}">` : `<div style="font-size:24px;${logoOffsetStyle}">🏫</div>`}
+          <div style="${schoolOffsetStyle}max-width:100%;">
+            <div style="font-size:${settings.schoolFontSize}px;font-weight:bold;color:${primaryColor};font-family:${settings.fontSchool};line-height:1.15;${schoolTextWrap}">${school?.name || 'School Name'}</div>
+            ${school?.city ? `<div style="font-size:8px;color:#6b7280;">${school.city}</div>` : ''}
+          </div>
+        </div>`;
+    } else if(settings.headerStyle === 'transparent') {
+      headerHtml = `
+        <div style="padding:8px 10px; position:relative; display:flex; align-items:center; background:transparent;flex-shrink:0; ${headerHeightStyle}">
+          ${logoImg ? `<img src="${logoImg}" style="width:${LOGO_SIZE}px;height:${LOGO_SIZE}px;object-fit:contain;border-radius:${logoRadius};position:absolute;left:${10+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;">` : `<span style="position:absolute;left:${10+logoOffX}px;top:50%;transform:translateY(-50%);margin-top:${logoOffY}px;font-size:20px;">🏫</span>`}
+          <div style="flex:1;text-align:center;min-width:0;${schoolOffsetStyle}">
+            <div style="font-size:${settings.schoolFontSize}px;font-weight:bold;color:${primaryColor};font-family:${settings.fontSchool};line-height:1.15;${schoolTextWrap}">${school?.name || 'School Name'}</div>
+            ${school?.board ? `<div style="font-size:8px;color:#6b7280;margin-top:1px;">${school.board}${school?.city ? ' | '+school.city : ''}</div>` : ''}
+          </div>
+        </div>`;
+    }
+
+    // Body Fields Logic
+    const fieldMap = {name:'Name',father:'Father',class:'Class',section:'Sec',roll:'Roll',dob:'D.O.B',mobile:'Mobile',blood:'Blood',address:'Address'};
+    let fieldsHtml = '';
+    const orderedFields = settings.fieldOrder || Object.keys(fieldMap);
+    
+    orderedFields.filter(fid => settings.visibleFields.includes(fid)).forEach(fid => {
+      const val = student ? (student[fid] || '') : `Sample ${fieldMap[fid]||fid}`;
+      if(!val && student) return;
+      
+      let valStyle = `color:${textColor};`;
+      if(fid === 'name') {
+        if(settings.nameHighlight === 'bold_color') valStyle = `color:${primaryColor}; font-weight:bold; font-size:${parseInt(settings.dataFontSize)+2}px;`;
+        else if(settings.nameHighlight === 'box') valStyle = `background:${primaryColor}; color:white; padding:1px 6px; border-radius:4px; font-weight:bold; display:inline-block;`;
+      }
+
+      const divider = settings.sectionDivider !== 'none' ? `border-bottom: 1px ${settings.sectionDivider} #e5e7eb; padding-bottom:2px;` : '';
+      const rowStyle = `margin-bottom:${fGap}; font-size:${settings.dataFontSize}px; font-family:${settings.fontData}; ${divider}`;
+
+      if(settings.labelStyle === 'bold_colon') {
+        const valueLineStyle = settings.showDashedLine !== false ? 'border-bottom:1px dashed #e5e7eb;' : '';
+        fieldsHtml += `<div style="display:flex; ${rowStyle}"><span style="font-weight:${lWeight};width:45px;color:${primaryColor};flex-shrink:0;">${fieldMap[fid]||fid}</span><span style="width:8px;text-align:center;font-weight:${lWeight};color:${primaryColor};flex-shrink:0;">:</span><span style="flex:1;${valueLineStyle}${valStyle}">${val}</span></div>`;
+      } else if(settings.labelStyle === 'muted') {
+        fieldsHtml += `<div style="${rowStyle}"><div style="color:#9ca3af;font-size:${Math.max(7,settings.dataFontSize-1)}px;font-weight:${lWeight};">${fieldMap[fid]||fid}</div><div style="font-weight:600;${valStyle}">${val}</div></div>`;
+      } else if(settings.labelStyle === 'underline') {
+        const underlineStyle = settings.showDashedLine !== false ? `border-bottom:1px solid ${primaryColor}20;padding-bottom:2px;` : '';
+        fieldsHtml += `<div style="${rowStyle}${underlineStyle}"><span style="font-weight:${lWeight};color:${primaryColor};">${fieldMap[fid]||fid}: </span><span style="${valStyle}">${val}</span></div>`;
+      } else if(settings.labelStyle === 'box') {
+        fieldsHtml += `<div style="display:inline-block;margin:1px;padding:2px 5px;background:${primaryColor}10;border-radius:3px;font-size:${Math.max(7,settings.dataFontSize-1)}px;font-family:${settings.fontData};"><b style="font-weight:${lWeight};">${fieldMap[fid]||fid}:</b> <span style="${valStyle}">${val}</span></div>`;
+      } else if(settings.labelStyle === 'pill') {
+        fieldsHtml += `<div style="display:flex; align-items:center; gap:6px; ${rowStyle}"><span style="font-weight:${lWeight};color:white;background:${primaryColor};font-size:${Math.max(7,settings.dataFontSize-2)}px;padding:1px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap;">${fieldMap[fid]||fid}</span><span style="${valStyle}">${val}</span></div>`;
+      } else if(settings.labelStyle === 'sidebar') {
+        fieldsHtml += `<div style="display:flex; align-items:center; gap:6px; ${rowStyle}"><span style="border-left:3px solid ${primaryColor};padding-left:4px;font-weight:${lWeight};color:${primaryColor};flex-shrink:0;white-space:nowrap;">${fieldMap[fid]||fid}</span><span style="${valStyle}">${val}</span></div>`;
+      } else if(settings.labelStyle === 'nolabel') {
+        fieldsHtml += `<div style="${rowStyle}${valStyle}">${val}</div>`;
+      }
+    });
+
+    const qrHtml = settings.showQR ? `<div style="width:35px;height:35px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;text-align:center;line-height:1.2;">QR<br>Code</div>` : '';
+    const barcodeHtml = settings.showBarcode ? `<div style="margin-top:3px;text-align:center;"><div style="font-size:5px;color:#9ca3af;letter-spacing:1px;">||||||||||||||||||||</div><div style="font-size:7px;color:#6b7280;">${student?.roll || '000000'}</div></div>` : '';
+    const watermarkHtml = settings.watermark ? `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:28px;font-weight:bold;color:${primaryColor};opacity:0.04;white-space:nowrap;pointer-events:none;z-index:1;letter-spacing:4px;">${settings.watermark}</div>` : '';
+
+    const borderStyleDynamic = `${settings.photoBorderWidth}px ${settings.photoBorderStyle} ${settings.photoBorderColor}`;
+    const photoHtml = settings.photoPos !== 'none' && (stuImg || !student) ? `
+      <div style="flex-shrink:0;display:inline-block;${photoOffsetAttr}">
+        ${stuImg ? `<img src="${stuImg}" style="width:${photoDim}px;height:${photoHeight}px;object-fit:cover;border:${borderStyleDynamic};border-radius:${photoRadius};display:block;">` : `<div style="width:${photoDim}px;height:${photoHeight}px;border:${borderStyleDynamic};border-radius:${photoRadius};background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:28px;">👤</div>`}
+        ${qrHtml}
+        ${barcodeHtml}
+      </div>` : '';
+
+    const footerHtml = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:auto;padding-top:4px;">
+        ${settings.footerText ? `<span style="font-size:7px;color:#6b7280;">${settings.footerText}</span>` : '<span></span>'}
+        ${settings.showSign && signImg ? `<img src="${signImg}" style="height:18px;max-width:60px;object-fit:contain;">` : settings.showSign ? `<span style="font-size:7px;color:#9ca3af;border-top:1px solid #d1d5db;padding-top:1px;">Principal</span>` : ''}
+      </div>`;
+
+    const usePhotoAbove = isPortrait || settings.photoPos === 'top' || settings.photoPos === 'none';
+    const photoBlock = photoHtml ? `<div style="text-align:center;margin-bottom:6px;flex-shrink:0;">${photoHtml}</div>` : '';
+    const bodyContent = !usePhotoAbove ? `
+      <div style="display:flex;flex:1;gap:8px;align-items:flex-start;${settings.photoPos==='right'?'flex-direction:row-reverse':''};">
+        ${photoHtml}
+        <div style="flex:1;text-align:${settings.textAlign};overflow:hidden;">${fieldsHtml}</div>
+      </div>` : `
+      ${photoBlock}
+      <div style="flex:1;text-align:${settings.textAlign};overflow:hidden;">${fieldsHtml}</div>`;
+
+    const borderStyle = settings.showBorder ? `border: 2px solid ${primaryColor};` : 'border: 1px solid #e5e7eb;';
+    const bgOpacityVal = Math.min(100, Math.max(0, parseInt(settings.bgOpacity || 15)));
+    const bgImgHtml = bgImg ? `<img src="${bgImg}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal/100};z-index:0;pointer-events:none;mix-blend-mode:multiply;">` : '';
+    const cardBg = bgImg && bgOpacityVal > 60 ? 'white' : bgColor;
+
+    return `
+      <style>${settings.customCss}</style>
+      <div class="custom-card-root" style="width:${W}px;height:${H}px;background:${cardBg};border-radius:${radius};${borderStyle}${cardShadow}position:relative;overflow:hidden;font-family:Arial,sans-serif;display:flex;flex-direction:column;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        <div style="position:absolute;inset:0;z-index:0;pointer-events:none;${patternCss}"></div>
+        ${bgImgHtml}
+        ${accentHtml}
+        ${idTagHtml}
+        ${watermarkHtml}
+        <div style="position:relative;z-index:2;display:flex;flex-direction:column;height:100%;">
+          ${headerHtml}
+          <div style="padding:6px 8px;flex:1;display:flex;flex-direction:column;min-height:0;overflow:visible;${tShadow}">
+            ${bodyContent}
+            ${settings.emergencyLabel ? `<div style="font-size:7px;color:#dc2626;margin-top:2px;">📞 ${settings.emergencyLabel}</div>` : ''}
+            ${footerHtml}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderDesignerBackSide(school, settings) {
+    const isPortrait = settings.size === 'portrait';
+    const W = isPortrait ? 200 : 320;
+    const H = isPortrait ? 320 : 200;
+    const primaryColor = settings.colorPrimary;
+    const bgColor = getBgCss(settings);
+    const radius = settings.radius + 'px';
+    const borderStyle = settings.showBorder ? `border: 2px solid ${primaryColor};` : 'border: 1px solid #e5e7eb;';
+    const backText = settings.backText || `If found, please return to school or contact the student's family.<br><span style="color:#dc2626;">यह कार्ड मिलने पर कृपया वापस करें।</span>`;
+    
+    return `
+      <style>${settings.customCss}</style>
+      <div class="custom-card-root" style="width:${W}px;height:${H}px;background:${bgColor};border-radius:${radius};${borderStyle}position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center;">
+        ${school?.logo ? `<img src="${school.logo}" style="width:50px;height:50px;object-fit:contain;margin-bottom:8px;">` : '<div style="font-size:36px;margin-bottom:8px;">🏫</div>'}
+        <div style="font-size:12px;font-weight:bold;color:${primaryColor};margin-bottom:4px;">${school?.name || 'School Name'}</div>
+        ${school?.address ? `<div style="font-size:9px;color:#6b7280;margin-bottom:4px;">${school.address}${school?.city?', '+school.city:''}</div>` : ''}
+        ${school?.phone ? `<div style="font-size:9px;color:#374151;">📞 ${school.phone}</div>` : ''}
+        <div style="margin-top:12px;padding-top:10px;border-top:1px dashed ${primaryColor}40;font-size:8px;color:#9ca3af;width:100%;">
+          ${backText}
+        </div>
+      </div>`;
+  }
+
+  // --- SAVE & LOAD DESIGN TEMPLATE UPDATED ---
+  function saveDesignTemplate() {
+    const schoolId = document.getElementById('designer_school')?.value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    if(!state.designTemplates) state.designTemplates = {};
+    const settings = getDesignerSettings();
+    state.designTemplates[schoolId] = { ...settings, savedAt: Date.now() };
+    const ok = saveLocal();
+    if(ok) {
+      const schoolName = state.schools.find(s => s.id === schoolId)?.name || 'this school';
+      showToast(`✅ Design permanently saved for "${schoolName}"!`);
+    }
+    updateSaveStatus();
+  }
+
+  // Permanently remove the saved design for the currently selected school
+  function clearDesignTemplate() {
+    const schoolId = document.getElementById('designer_school')?.value;
+    if(!schoolId) return showToast('⚠️ Pehle school select karein', true);
+    if(!state.designTemplates || !state.designTemplates[schoolId]) {
+      return showToast('Is school ke liye koi saved design nahi mila', true);
+    }
+    const schoolName = state.schools.find(s => s.id === schoolId)?.name || 'this school';
+    if(!confirm(`"${schoolName}" ke liye saved design permanently delete karein?`)) return;
+    delete state.designTemplates[schoolId];
+    saveLocal();
+    showToast('🗑️ Saved design removed for this school');
+    updateSaveStatus();
+  }
+
+  // Shows whether the current design matches the permanently saved one for this school
+  function updateSaveStatus() {
+    const badge = document.getElementById('design_save_status');
+    if(!badge) return;
+    const schoolId = document.getElementById('designer_school')?.value;
+    const saved = state.designTemplates && schoolId ? state.designTemplates[schoolId] : null;
+
+    if(!saved) {
+      badge.className = 'save-status-badge unsaved';
+      badge.innerHTML = '⚪ No saved design for this school';
+      return;
+    }
+
+    const { savedAt, ...savedSettings } = saved;
+    const current = getDesignerSettings();
+    const isSame = JSON.stringify(current) === JSON.stringify(savedSettings);
+
+    if(isSame) {
+      const when = savedAt ? new Date(savedAt).toLocaleString() : '';
+      badge.className = 'save-status-badge saved';
+      badge.innerHTML = `✅ Saved${when ? ' · ' + when : ''}`;
+    } else {
+      badge.className = 'save-status-badge unsaved';
+      badge.innerHTML = '● Unsaved changes';
+    }
+  }
+
+  function loadDesignTemplate(tpl) {
+    if(!tpl) return;
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el && val !== undefined) el.value = val; };
+    const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = val; };
+    const setRadio = (name, val) => { const el = document.querySelector(`input[name="${name}"][value="${val}"]`); if(el) el.checked = true; };
+    
+    setVal('d_size', tpl.size); setVal('d_photo_pos', tpl.photoPos); setVal('d_header_style', tpl.headerStyle);
+    setVal('d_color_primary', tpl.colorPrimaryRaw || tpl.colorPrimary); setVal('d_color_secondary', tpl.colorSecondaryRaw || tpl.colorSecondary);
+    setVal('d_color_text', tpl.colorText); setVal('d_color_bg', tpl.colorBgRaw || tpl.colorBg);
+    
+    const spEl = document.getElementById('d_show_primary'); if(spEl) { spEl.checked = tpl.showPrimary !== false; toggleColorVisibility('primary'); }
+    const ssEl = document.getElementById('d_show_secondary'); if(ssEl) { ssEl.checked = tpl.showSecondary !== false; toggleColorVisibility('secondary'); }
+    const sbEl = document.getElementById('d_show_bg'); if(sbEl) { sbEl.checked = tpl.showBg !== false; toggleColorVisibility('bg'); }
+    
+    setVal('d_bg_style', tpl.bgStyle); setVal('d_bg_opacity', tpl.bgOpacity);
+    setVal('d_font_school', tpl.fontSchool); setVal('d_font_data', tpl.fontData);
+    setVal('d_school_font_size', tpl.schoolFontSize); setVal('d_data_font_size', tpl.dataFontSize);
+    setVal('d_text_align', tpl.textAlign); setVal('d_label_style', tpl.labelStyle);
+    const dlEl = document.getElementById('d_show_dashed_line'); if(dlEl) dlEl.checked = tpl.showDashedLine !== false;
+    setVal('d_radius', tpl.radius); setVal('d_watermark', tpl.watermark || '');
+    setVal('d_footer_text', tpl.footerText || ''); setVal('d_emergency_label', tpl.emergencyLabel || '');
+    setVal('d_qr_data', tpl.qrData); setVal('d_photo_offset_x', tpl.photoOffsetX || 0);
+    setVal('d_photo_offset_y', tpl.photoOffsetY || 0);
+    setVal('d_photo_size', tpl.photoSize || 70);
+    setVal('d_logo_offset_x', tpl.logoOffsetX || 0);
+    setVal('d_logo_offset_y', tpl.logoOffsetY || 0);
+    setVal('d_logo_size', tpl.logoSize || 32);
+    setVal('d_school_offset_x', tpl.schoolOffsetX || 0);
+    setVal('d_school_offset_y', tpl.schoolOffsetY || 0);
+    setCheck('d_show_qr', tpl.showQR); setCheck('d_show_barcode', tpl.showBarcode);
+    setCheck('d_show_sign', tpl.showSign); setCheck('d_show_border', tpl.showBorder);
+    if(tpl.photoShape) setRadio('d_photo_shape', tpl.photoShape);
+    if(tpl.logoShape) setRadio('d_logo_shape', tpl.logoShape);
+    if(tpl.fieldOrder) { designerFieldOrder = [...tpl.fieldOrder]; renderDesignerFieldToggles(); }
+    
+    // Naye Advanced Fields Restore
+    setVal('d_header_height', tpl.headerHeight || 0);
+    setVal('d_id_tag', tpl.idTag || 'none');
+    setVal('d_accent_strip', tpl.accentStrip || 'none');
+    setVal('d_bg_pattern', tpl.bgPattern || 'none');
+    setCheck('d_card_shadow', tpl.cardShadow !== false);
+    setCheck('d_text_shadow', tpl.textShadow || false);
+    setVal('d_field_gap', tpl.fieldGap !== undefined ? tpl.fieldGap : 3);
+    setVal('d_name_highlight', tpl.nameHighlight || 'none');
+    setVal('d_label_weight', tpl.labelWeight || 'bold');
+    setVal('d_section_divider', tpl.sectionDivider || 'none');
+    setVal('d_photo_border_color', tpl.photoBorderColor || '#4f46e5');
+    setVal('d_photo_border_width', tpl.photoBorderWidth !== undefined ? tpl.photoBorderWidth : 2);
+    setVal('d_photo_border_style', tpl.photoBorderStyle || 'solid');
+    setVal('d_back_text', tpl.backText || '');
+    setVal('d_custom_css', tpl.customCss || '');
+
+    // Restore text labels for ranges
+    const rangeMap = {
+      'd_radius': 'radius_val', 'd_bg_opacity': 'bgop_val', 'd_school_font_size': 'schfont_val',
+      'd_data_font_size': 'datafont_val', 'd_photo_size': 'photo_size_val', 'd_logo_size': 'logo_size_val',
+      'd_field_gap': 'field_gap_val', 'd_school_offset_x': 'school_offset_x_val', 'd_school_offset_y': 'school_offset_y_val'
+    };
+    Object.entries(rangeMap).forEach(([inputId, spanId]) => {
+      const inp = document.getElementById(inputId);
+      const sp = document.getElementById(spanId);
+      if(inp && sp) sp.textContent = inp.value + (inputId === 'd_bg_opacity' ? '%' : 'px');
+    });
+    
+    const hh = document.getElementById('d_header_height'); 
+    if(hh) { const el = document.getElementById('header_height_val'); if(el) el.textContent = hh.value == 0 ? 'Auto' : hh.value + 'px'; }
+  }
+
+  function resetDesigner() {
+    if(!confirm('Reset all design settings to defaults?')) return;
+    ['d_color_primary','d_color_secondary','d_color_text','d_color_bg'].forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.value = id === 'd_color_primary' ? '#4f46e5' : id === 'd_color_secondary' ? '#818cf8' : id === 'd_color_text' ? '#1f2937' : '#ffffff';
+    });
+    ['d_size','d_photo_pos','d_header_style','d_bg_style','d_font_school','d_font_data','d_text_align','d_label_style',
+     'd_id_tag','d_accent_strip','d_bg_pattern','d_name_highlight','d_section_divider'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.selectedIndex = 0;
+    });
+    const lw = document.getElementById('d_label_weight'); if(lw) lw.value = 'bold';
+    
+    ['d_shape_square','d_logo_shape_square'].forEach(id => { const el = document.getElementById(id); if(el) el.checked = true; });
+    
+    // ranges & inputs
+    const ps = document.getElementById('d_photo_size'); if(ps) { ps.value = 70; document.getElementById('photo_size_val').textContent = '70px'; }
+    const hh = document.getElementById('d_header_height'); if(hh) { hh.value = 0; document.getElementById('header_height_val').textContent = 'Auto'; }
+    const fg = document.getElementById('d_field_gap'); if(fg) { fg.value = 3; document.getElementById('field_gap_val').textContent = '3px'; }
+    const sox = document.getElementById('d_school_offset_x'); if(sox) { sox.value = 0; document.getElementById('school_offset_x_val').textContent = '0px'; }
+    const soy = document.getElementById('d_school_offset_y'); if(soy) { soy.value = 0; document.getElementById('school_offset_y_val').textContent = '0px'; }
+    const pbw = document.getElementById('d_photo_border_width'); if(pbw) pbw.value = 2;
+    const pbc = document.getElementById('d_photo_border_color'); if(pbc) pbc.value = '#4f46e5';
+    const bt = document.getElementById('d_back_text'); if(bt) bt.value = '';
+    const cc = document.getElementById('d_custom_css'); if(cc) cc.value = '';
+    const dl = document.getElementById('d_show_dashed_line'); if(dl) dl.checked = true;
+    
+    designerFieldOrder = ['name','father','class','section','roll','dob','mobile','blood','address'];
+    renderDesignerFieldToggles();
+    document.querySelectorAll('.d-field-check').forEach(c => c.checked = true);
+    updateDesignerPreview();
+    showToast('Design reset to defaults');
+  }
+
+  // --- FLOATING PREVIEW ZOOM & UPDATE LOGIC ---
+  let designerZoom = 1.0;
+  function changeZoom(delta) {
+    designerZoom = Math.min(2.5, Math.max(0.4, designerZoom + delta));
+    designerZoom = Math.round(designerZoom * 10) / 10;
+    document.getElementById('zoom_label').textContent = Math.round(designerZoom * 100) + '%';
+    applyZoom();
+  }
+  function resetZoom() {
+    designerZoom = 1.0;
+    document.getElementById('zoom_label').textContent = '100%';
+    applyZoom();
+  }
+  function applyZoom() {
+    const frontEl = document.getElementById('designer_card_render');
+    const backEl = document.getElementById('designer_back_render');
+    if(frontEl) frontEl.style.transform = `scale(${designerZoom})`;
+    if(backEl) backEl.style.transform = `scale(${designerZoom})`;
+    if(frontEl) frontEl.style.transformOrigin = 'top center';
+    if(backEl) backEl.style.transformOrigin = 'top center';
+  }
+
+  async function updateDesignerPreview() {
+    const settings = getDesignerSettings();
+    const schoolId = document.getElementById('designer_school')?.value;
+    const schoolRaw = state.schools.find(s => s.id === schoolId);
+    
+    const stuId = document.getElementById('designer_preview_student')?.value;
+    const studentRaw = stuId ? state.students.find(s => s.id === stuId) : null;
+
+    const school = schoolRaw ? {
+      ...schoolRaw,
+      logo: await resolvePhoto(schoolRaw.logo),
+      bg: await resolvePhoto(schoolRaw.bg),
+      sign: await resolvePhoto(schoolRaw.sign),
+    } : null;
+
+    const student = studentRaw ? {
+      ...studentRaw,
+      photo: await resolvePhoto(studentRaw.photo),
+    } : null;
+    
+    const sizeLabels = { landscape:'3.37" × 2.13"', portrait:'2.13" × 3.37"', square:'2.5" × 2.5"' };
+    const sizeEl = document.getElementById('d_size_label');
+    if(sizeEl) sizeEl.textContent = sizeLabels[settings.size] || '';
+
+    const frontEl = document.getElementById('designer_card_render');
+    const backEl = document.getElementById('designer_back_render');
+    if(frontEl) {
+      frontEl.innerHTML = renderDesignedCard(student, school, settings);
+      frontEl.style.transform = `scale(${designerZoom})`;
+      frontEl.style.transformOrigin = 'top center';
+    }
+    if(backEl) {
+      backEl.innerHTML = renderDesignerBackSide(school, settings);
+      backEl.style.transform = `scale(${designerZoom})`;
+      backEl.style.transformOrigin = 'top center';
+    }
+    updateSaveStatus();
+  }
+
+  function toggleDesignerBack() {
+    designerFlipped = !designerFlipped;
+    document.getElementById('designer_card_front').style.display = designerFlipped ? 'none' : 'block';
+    document.getElementById('designer_card_back').style.display = designerFlipped ? 'block' : 'none';
+  }
+
+  // ============================================================
+  // LOGIN / AUTHENTICATION
+  // ============================================================
+  function switchLoginTab(tab) {
+    loginTab = tab;
+    document.getElementById('loginTabAdmin').classList.toggle('active', tab === 'admin');
+    document.getElementById('loginTabSub').classList.toggle('active', tab === 'sub');
+    document.getElementById('login_username').style.display = tab === 'sub' ? 'block' : 'none';
+    document.getElementById('loginUserLabel').textContent = tab === 'sub' ? 'Sub Admin Login' : 'Admin Password';
+    document.getElementById('login_password').placeholder = tab === 'sub' ? 'Password' : 'Admin Password';
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('login_username').value = '';
+    document.getElementById('login_password').value = '';
+  }
+
+  function attemptLogin() {
+    const errEl = document.getElementById('loginError');
+    errEl.textContent = '';
+    const password = document.getElementById('login_password').value;
+
+    if(loginTab === 'admin') {
+      if(password === (state.adminPassword || 'admin123')) {
+        sessionStorage.setItem('loggedInRole', 'admin');
+        sessionStorage.setItem('loggedInId', 'admin');
+        unlockApp('admin');
+      } else {
+        errEl.textContent = '❌ Galat password. Dobara try karein.';
+      }
+    } else {
+      const username = document.getElementById('login_username').value.trim();
+      const su = state.subusers.find(s => s.username === username);
+      if(su && su.password === password) {
+        sessionStorage.setItem('loggedInRole', su.id);
+        sessionStorage.setItem('loggedInId', su.id);
+        unlockApp(su.id);
+      } else {
+        errEl.textContent = '❌ Galat username ya password.';
+      }
+    }
+  }
+
+  function unlockApp(role) {
+    state.activeRole = role;
+    if(role !== 'admin') {
+      const su = state.subusers.find(s => s.id === role);
+      if(su && su.schoolId) state.activeSchoolId = su.schoolId;
+    }
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('appShell').classList.add('unlocked');
+
+    const badge = document.getElementById('loggedInAsBadge');
+    if(role === 'admin') {
+      badge.textContent = '👑 Logged in as Super Admin';
+    } else {
+      const su = state.subusers.find(s => s.id === role);
+      badge.textContent = su ? `👤 Logged in as ${su.name}` : '👤 Sub Admin';
+    }
+
+    populateRoleSimulator();
+    applyRoleVisibility();
+    applyPermissionVisibility();
+    updateSidebarBadge();
+    showPage('dashboard');
+  }
+
+  function logoutUser() {
+    if(!confirm('Logout karein?')) return;
+    sessionStorage.removeItem('loggedInRole');
+    sessionStorage.removeItem('loggedInId');
+    document.getElementById('appShell').classList.remove('unlocked');
+    document.getElementById('loginScreen').style.display = 'flex';
+    document.getElementById('login_password').value = '';
+    document.getElementById('login_username').value = '';
+    document.getElementById('loginError').textContent = '';
+  }
+
+  function checkExistingSession() {
+    const savedRole = sessionStorage.getItem('loggedInRole');
+    if(!savedRole) return false;
+    if(savedRole === 'admin') { unlockApp('admin'); return true; }
+    const su = state.subusers.find(s => s.id === savedRole);
+    if(su) { unlockApp(savedRole); return true; }
+    sessionStorage.removeItem('loggedInRole');
+    sessionStorage.removeItem('loggedInId');
+    return false;
+  }
+
+  // ============================================================
+  // PERMISSION ENFORCEMENT (Sub Admin perms.add/edit/delete/print)
+  // ============================================================
+  function getCurrentSubUser() {
+    if(state.activeRole === 'admin') return null;
+    return state.subusers.find(s => s.id === state.activeRole) || null;
+  }
+
+  function hasPerm(permName) {
+    if(state.activeRole === 'admin') return true;
+    const su = getCurrentSubUser();
+    if(!su) return false;
+    return su.perms?.[permName] !== false;
+  }
+
+  // Hides/disables UI controls based on the logged-in Sub Admin's permissions.
+  function applyPermissionVisibility() {
+    const isAdmin = state.activeRole === 'admin';
+    const canAdd = isAdmin || hasPerm('add');
+    const canEdit = isAdmin || hasPerm('edit');
+    const canDelete = isAdmin || hasPerm('delete');
+    const canPrint = isAdmin || hasPerm('print');
+
+    const navAdd = document.getElementById('nav-add-student');
+    if(navAdd) navAdd.style.display = canAdd ? '' : 'none';
+
+    const navPrint = document.getElementById('nav-preview');
+    if(navPrint) navPrint.style.display = canPrint ? '' : 'none';
+
+    document.querySelectorAll('.perm-edit-btn').forEach(el => el.style.display = canEdit ? '' : 'none');
+    document.querySelectorAll('.perm-delete-btn').forEach(el => el.style.display = canDelete ? '' : 'none');
+    document.querySelectorAll('.perm-print-btn').forEach(el => el.style.display = canPrint ? '' : 'none');
+  }
+
+  // ============================================================
+  // INITIAL BOOT
+  // ============================================================
+  async function bootApp() {
+    try {
+      await initDB();
+    } catch(err) {
+      console.warn('IndexedDB unavailable, continuing without it:', err);
+      showToast('⚠️ Photo/Logo local storage restricted. Images load hongi cloud se.', true);
+    }
+
+    // 1. Load from localStorage first (instant, no network)
+    loadLocal();
+
+    // 2. Then try to load fresh data from Firebase (cloud)
+    if(window._firebaseReady) {
+      await loadFromFirebase();
+    } else {
+      // Firebase module not ready yet — wait for it
+      document.addEventListener('firebaseReady', async () => {
+        await loadFromFirebase();
+        // Refresh UI after cloud load
+        if(state.schools.length > 0) {
+          const validSchool = state.schools.find(s => s.id === state.activeSchoolId);
+          if(!validSchool) state.activeSchoolId = state.schools[0].id;
+        }
+        updateSidebarBadge();
+        const activePage = document.querySelector('.page.active');
+        if(activePage) showPage(activePage.id.replace('page-', ''));
+      }, { once: true });
+    }
+
+    // Always ensure activeSchoolId points to a valid, existing school
+    if(state.schools.length > 0) {
+      const validSchool = state.schools.find(s => s.id === state.activeSchoolId);
+      if(!validSchool) state.activeSchoolId = state.schools[0].id;
+    } else {
+      state.activeSchoolId = null;
+    }
+    const suThead = document.querySelector('#subusersTable thead tr');
+    if(suThead) suThead.innerHTML = '<th>Name / Username</th><th>Assigned School</th><th>Classes</th><th>Perms</th><th>Actions</th>';
+
+    // Login screen stays up until a valid session is found or the user logs in manually.
+    const restored = checkExistingSession();
+    if(!restored) {
+      document.getElementById('loginScreen').style.display = 'flex';
+      document.getElementById('appShell').classList.remove('unlocked');
+    }
+  }
+
+  window.onload = bootApp;
+
+  // (All Drag-Drop & Floating Preview logic is identical to original, abbreviated for space)
+  let fpCollapsed = false;
+  function showFloatingPreview() { const p=document.getElementById('floating-preview-panel'); if(p){p.style.display='flex'; fpCollapsed=false; p.classList.remove('collapsed'); document.getElementById('fp-collapse-btn').textContent='─';} updateDesignerPreview(); }
+  function hideFloatingPreview() { const p=document.getElementById('floating-preview-panel'); if(p) p.style.display='none'; }
+  function toggleFPCollapse() { fpCollapsed=!fpCollapsed; const p=document.getElementById('floating-preview-panel'); const b=document.getElementById('fp-collapse-btn'); if(fpCollapsed){p.classList.add('collapsed');b.textContent='□';}else{p.classList.remove('collapsed');b.textContent='─';} }
+  // Floating Preview Panel - Drag to move (mouse + touch), stays within viewport
+  (function initDrag(){
+    const panel = document.getElementById('floating-preview-panel');
+    const handle = document.getElementById('fp-drag-handle');
+    if(!panel || !handle) return;
+
+    let isDragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    function clamp(val, min, max) { return Math.min(Math.max(val, min), max); }
+
+    function beginDrag(clientX, clientY) {
+      const rect = panel.getBoundingClientRect();
+      // Switch from right/top auto-positioning to explicit left/top so it can be dragged freely
+      panel.style.left = rect.left + 'px';
+      panel.style.top = rect.top + 'px';
+      panel.style.right = 'auto';
+      startLeft = rect.left;
+      startTop = rect.top;
+      startX = clientX;
+      startY = clientY;
+      isDragging = true;
+      panel.classList.add('dragging');
+    }
+
+    function moveDrag(clientX, clientY) {
+      if(!isDragging) return;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+      const rect = panel.getBoundingClientRect();
+      const maxLeft = Math.max(0, window.innerWidth - rect.width);
+      const maxTop = Math.max(0, window.innerHeight - rect.height);
+      const newLeft = clamp(startLeft + dx, 0, maxLeft);
+      const newTop = clamp(startTop + dy, 0, maxTop);
+      panel.style.left = newLeft + 'px';
+      panel.style.top = newTop + 'px';
+    }
+
+    function endDrag() {
+      if(!isDragging) return;
+      isDragging = false;
+      panel.classList.remove('dragging');
+    }
+
+    // Mouse events
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      beginDrag(e.clientX, e.clientY);
+    });
+    document.addEventListener('mousemove', (e) => {
+      if(!isDragging) return;
+      e.preventDefault();
+      moveDrag(e.clientX, e.clientY);
+    });
+    document.addEventListener('mouseup', endDrag);
+
+    // Touch events (mobile/tablet)
+    handle.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      beginDrag(t.clientX, t.clientY);
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if(!isDragging) return;
+      const t = e.touches[0];
+      moveDrag(t.clientX, t.clientY);
+    }, { passive: true });
+    document.addEventListener('touchend', endDrag);
+    document.addEventListener('touchcancel', endDrag);
+
+    // Keep panel within viewport bounds if the window is resized
+    window.addEventListener('resize', () => {
+      if(panel.style.left === '' || panel.style.top === '') return;
+      const rect = panel.getBoundingClientRect();
+      const maxLeft = Math.max(0, window.innerWidth - rect.width);
+      const maxTop = Math.max(0, window.innerHeight - rect.height);
+      panel.style.left = clamp(rect.left, 0, maxLeft) + 'px';
+      panel.style.top = clamp(rect.top, 0, maxTop) + 'px';
+    });
+  })();
+</script>
+</body>
+</html>
